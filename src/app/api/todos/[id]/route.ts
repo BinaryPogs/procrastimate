@@ -21,7 +21,6 @@ export async function PATCH(
   try {
     const { completed } = await request.json()
     const { id } = await context.params
-    const now = new Date()
 
     const todo = await prisma.todo.findUnique({
       where: { 
@@ -34,36 +33,24 @@ export async function PATCH(
       return NextResponse.json({ error: 'Todo not found' }, { status: 404 })
     }
 
-    // Only allow uncompleting a task once
+    // Prevent uncompleting if already uncompleted
     if (!completed && !todo.completed) {
       return NextResponse.json({ error: 'Task is already uncompleted' }, { status: 400 })
     }
 
-    // Prevent toggling completed tasks that have been amended once
+    // Prevent multiple amendments
     if (!completed && todo.completed && todo.amendedOnce) {
       return NextResponse.json({ error: 'Cannot uncheck a completed task more than once' }, { status: 400 })
     }
 
-    const points = calculateTaskPoints({
-      completed,
-      pointsAwarded: todo.pointsAwarded,
-      amendedOnce: todo.amendedOnce
-    }, now)
-
-    console.log('Points calculation:', {
-      newCompleted: completed,
-      currentCompleted: todo.completed,
-      pointsAwarded: todo.pointsAwarded,
-      amendedOnce: todo.amendedOnce,
-      points
-    })
+    const points = calculateTaskPoints(todo, { completed })
 
     const [updatedTodo, updatedUser] = await prisma.$transaction([
       prisma.todo.update({
         where: { id },
         data: { 
           completed,
-          pointsAwarded: completed ? (!todo.amendedOnce) : false,
+          // Track if this task has been amended (uncompleted) before
           amendedOnce: !completed && todo.completed ? true : todo.amendedOnce
         }
       }),
@@ -81,9 +68,11 @@ export async function PATCH(
       })
     ])
 
-    console.log('Todo before update:', todo)
-    console.log('Points calculated:', points)
-    console.log('Updated user:', updatedUser)
+    console.log('Task update:', {
+      previousState: todo,
+      newState: updatedTodo,
+      points
+    })
 
     await revalidatePath('/api/todos')
     await revalidatePath('/api/leaderboard')

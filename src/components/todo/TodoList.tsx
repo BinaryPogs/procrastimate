@@ -157,6 +157,9 @@ export default function TodoList({ onScoreUpdate }: TodoListProps) {
   }
 
   const deleteTodo = async (id: string) => {
+    // Optimistic delete
+    setTodos(prev => prev.filter(todo => todo.id !== id))
+
     try {
       const response = await fetch(`/api/todos/${id}`, {
         method: 'DELETE',
@@ -167,12 +170,18 @@ export default function TodoList({ onScoreUpdate }: TodoListProps) {
         throw new Error(data.error || 'Failed to delete todo')
       }
       
-      setTodos(prev => prev.filter(todo => todo.id !== id))
-      toast.success('Todo deleted')
+      toast.success('Task deleted')
     } catch (error: unknown) {
+      // Revert on error
       const err = error as Error
       console.error('Failed to delete todo:', err)
       toast.error(err.message || 'Failed to delete todo')
+      
+      // Restore the todo
+      const todoToRestore = todos.find(t => t.id === id)
+      if (todoToRestore) {
+        setTodos(prev => [...prev, todoToRestore])
+      }
     }
   }
 

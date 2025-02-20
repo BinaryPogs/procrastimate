@@ -11,23 +11,30 @@ export const SCORING_RULES = {
   ] as const
 }
 
-export function calculateTaskPoints(todo: { 
-  completed: boolean, 
-  pointsAwarded: boolean, 
-  amendedOnce: boolean 
-}, now: Date) {
-  // If marking as completed and points haven't been awarded yet
-  if (todo.completed && !todo.pointsAwarded) {
-    const hour = now.getHours();
-    return hour < 12 ? 15 : 10; // Bonus points for early completion
+interface TaskState {
+  completed: boolean
+  pointsAwarded: boolean
+  amendedOnce: boolean
+}
+
+export function calculateTaskPoints(
+  previousState: TaskState,
+  newState: { completed: boolean }
+): number {
+  const hour = new Date().getHours()
+  const basePoints = hour < 12 ? 15 : 10 // More points for early completion
+
+  // Completing a task
+  if (newState.completed && !previousState.completed) {
+    return basePoints
   }
 
-  // If uncompleting a task that was awarded points and hasn't been amended
-  if (!todo.completed && todo.pointsAwarded && !todo.amendedOnce) {
-    return -15; // Deduct the points that were awarded
+  // Uncompleting a task
+  if (!newState.completed && previousState.completed) {
+    return -basePoints // Deduct the same amount that was awarded
   }
 
-  return 0; // No points for other cases (like re-completing after uncompleting)
+  return 0 // No points for other cases
 }
 
 export function getRank(score: number) {
