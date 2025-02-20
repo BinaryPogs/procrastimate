@@ -70,6 +70,7 @@ export default function FriendsList() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [refreshCooldown, setRefreshCooldown] = useState(false)
   const [refreshCountdown, setRefreshCountdown] = useState(0)
+  const [isDialogLoading, setIsDialogLoading] = useState(false)
 
   const debouncedSearchQuery = useDebounce(searchQuery, 300)
 
@@ -432,10 +433,14 @@ export default function FriendsList() {
     }
   }
 
-  // Add a handler for dialog open
   const handleDialogOpen = async (open: boolean) => {
     if (open && !searchQuery) {
-      await fetchRecommendations()
+      setIsDialogLoading(true)
+      try {
+        await fetchRecommendations()
+      } finally {
+        setIsDialogLoading(false)
+      }
     }
   }
 
@@ -513,109 +518,111 @@ export default function FriendsList() {
                   onFilterChange={setSearchFilter}
                 />
               </div>
-              {isSearching && (
+              {isSearching && !isDialogLoading && (
                 <div className="flex justify-center">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               )}
               <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                {searchResults.length > 0 ? (
-                  <>
-                    {!searchQuery && (
-                      <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                        Recommended Users
-                      </h3>
-                    )}
-                    {searchResults.map((user) => (
-                      <div 
-                        key={user.id} 
-                        className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Avatar>
-                            <AvatarImage src={user.image ?? undefined} />
-                            <AvatarFallback>{user.name?.[0] ?? 'U'}</AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium">{user.name}</p>
-                              {user.isGuest && (
-                                <Badge variant="secondary" className="text-xs">
-                                  Guest
-                                </Badge>
-                              )}
+                {isDialogLoading ? (
+                  <div className="flex justify-center py-4">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  searchResults.length > 0 && (
+                    <>
+                      {!searchQuery && (
+                        <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                          Recommended Users
+                        </h3>
+                      )}
+                      {searchResults.map((user) => (
+                        <div 
+                          key={user.id} 
+                          className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Avatar>
+                              <AvatarImage src={user.image ?? undefined} />
+                              <AvatarFallback>{user.name?.[0] ?? 'U'}</AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium">{user.name}</p>
+                                {user.isGuest && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    Guest
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-500">{user.email}</p>
                             </div>
-                            <p className="text-sm text-gray-500">{user.email}</p>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {(() => {
-                            const requestStatus = getFriendRequestStatus(user.id)
-                            
-                            if (requestStatus?.status === 'PENDING') {
-                              return requestStatus.isOutgoing ? (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => cancelFriendRequest(user.id)}
-                                >
-                                  Cancel Request
-                                </Button>
-                              ) : (
-                                <div className="flex gap-1">
+                          <div className="flex items-center gap-2">
+                            {(() => {
+                              const requestStatus = getFriendRequestStatus(user.id)
+                              
+                              if (requestStatus?.status === 'PENDING') {
+                                return requestStatus.isOutgoing ? (
                                   <Button
-                                    variant="default"
+                                    variant="ghost"
                                     size="sm"
-                                    onClick={() => handleFriendRequest(user.id, 'ACCEPTED')}
+                                    onClick={() => cancelFriendRequest(user.id)}
                                   >
-                                    Accept
+                                    Cancel Request
                                   </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleFriendRequest(user.id, 'REJECTED')}
-                                  >
-                                    Decline
-                                  </Button>
-                                </div>
-                              )
-                            }
+                                ) : (
+                                  <div className="flex gap-1">
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      onClick={() => handleFriendRequest(user.id, 'ACCEPTED')}
+                                    >
+                                      Accept
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleFriendRequest(user.id, 'REJECTED')}
+                                    >
+                                      Decline
+                                    </Button>
+                                  </div>
+                                )
+                              }
 
-                            if (requestStatus?.status === 'ACCEPTED') {
+                              if (requestStatus?.status === 'ACCEPTED') {
+                                return (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled
+                                  >
+                                    Friends
+                                  </Button>
+                                )
+                              }
+
                               return (
                                 <Button
-                                  variant="ghost"
+                                  variant="outline"
                                   size="sm"
-                                  disabled
+                                  onClick={() => sendFriendRequest(user.id)}
+                                  disabled={pendingActions.has(user.id)}
                                 >
-                                  Friends
+                                  {pendingActions.has(user.id) ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    'Add Friend'
+                                  )}
                                 </Button>
                               )
-                            }
-
-                            return (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => sendFriendRequest(user.id)}
-                                disabled={pendingActions.has(user.id)}
-                              >
-                                {pendingActions.has(user.id) ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  'Add Friend'
-                                )}
-                              </Button>
-                            )
-                          })()}
+                            })()}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </>
-                ) : (
-                  <p className="text-center text-gray-500 py-4">
-                    {searchQuery ? 'No users found' : 'No recommendations available'}
-                  </p>
+                      ))}
+                    </>
+                  )
                 )}
               </div>
             </div>

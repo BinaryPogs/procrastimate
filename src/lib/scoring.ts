@@ -1,5 +1,3 @@
-import { Todo } from "@prisma/client"
-
 export const SCORING_RULES = {
   BASE_POINTS: 10,
   EARLY_COMPLETION_BONUS: 5, // Bonus for completing >2 hours before deadline
@@ -13,19 +11,23 @@ export const SCORING_RULES = {
   ] as const
 }
 
-export function calculateTaskPoints(todo: Todo, completionTime: Date): number | null {
-  // Only award points if not already awarded and task is being completed
-  if (todo.pointsAwarded || todo.completed) return null;
-
-  let points = SCORING_RULES.BASE_POINTS;
-
-  // Early completion bonus (if completed >2 hours before deadline)
-  const hoursBeforeDeadline = (todo.deadline.getTime() - completionTime.getTime()) / (1000 * 60 * 60);
-  if (hoursBeforeDeadline > 2) {
-    points += SCORING_RULES.EARLY_COMPLETION_BONUS;
+export function calculateTaskPoints(todo: { 
+  completed: boolean, 
+  pointsAwarded: boolean, 
+  amendedOnce: boolean 
+}, now: Date) {
+  // If marking as completed and points haven't been awarded yet
+  if (todo.completed && !todo.pointsAwarded) {
+    const hour = now.getHours();
+    return hour < 12 ? 15 : 10; // Bonus points for early completion
   }
 
-  return points;
+  // If uncompleting a task that was awarded points and hasn't been amended
+  if (!todo.completed && todo.pointsAwarded && !todo.amendedOnce) {
+    return -15; // Deduct the points that were awarded
+  }
+
+  return 0; // No points for other cases (like re-completing after uncompleting)
 }
 
 export function getRank(score: number) {

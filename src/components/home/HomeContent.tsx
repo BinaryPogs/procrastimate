@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import TodoList from "@/components/todo/TodoList"
 import LeaderboardCard from "@/components/leaderboard/LeaderboardCard"
 import FriendsList from "@/components/social/FriendsList"
@@ -10,29 +10,14 @@ interface HomeContentProps {
   userName: string | null | undefined
 }
 
-interface LeaderboardUser {
-  name: string | null
-  score: number
-}
-
 export default function HomeContent({ userName }: HomeContentProps) {
   const [localScore, setLocalScore] = useState<number | undefined>(undefined)
 
-  // Fetch initial score
-  useEffect(() => {
-    async function fetchInitialScore() {
-      try {
-        const response = await fetch('/api/leaderboard')
-        const data = await response.json()
-        const userScore = data.find((u: LeaderboardUser) => u.name === userName)?.score ?? 0
-        setLocalScore(userScore)
-      } catch (error) {
-        console.error('Failed to fetch initial score:', error)
-      }
-    }
-
-    fetchInitialScore()
-  }, [userName])
+  // Update the score handler
+  const handleScoreUpdate = useCallback((newScore: number) => {
+    console.log('Score updated:', newScore)
+    setLocalScore(newScore)
+  }, [])
 
   return (
     <div className="min-h-screen bg-[#FFFBE3]">
@@ -58,7 +43,7 @@ export default function HomeContent({ userName }: HomeContentProps) {
         {/* Main Content */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           <div className="lg:col-span-8">
-            <TodoList onScoreUpdate={setLocalScore} />
+            <TodoList onScoreUpdate={handleScoreUpdate} />
           </div>
           
           <div className="lg:col-span-4 space-y-8">

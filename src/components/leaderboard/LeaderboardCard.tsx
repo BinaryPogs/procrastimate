@@ -1,13 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Card, CardHeader, CardContent } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Medal, Trophy } from 'lucide-react'
+import { Medal, Trophy, RefreshCw } from 'lucide-react'
 import { SCORING_RULES, getRank } from '@/lib/scoring'
 import { motion } from 'framer-motion'
 import { Progress } from "@/components/ui/progress"
 import { useSession } from 'next-auth/react'
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 interface LeaderboardUser {
   id: string
@@ -22,38 +24,48 @@ interface LeaderboardCardProps {
 
 export default function LeaderboardCard({ localScore }: LeaderboardCardProps) {
   const { data: session } = useSession()
-  const [users, setUsers] = useState<LeaderboardUser[]>([])
+  const [leaderboard, setLeaderboard] = useState<LeaderboardUser[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
-  useEffect(() => {
-    async function fetchLeaderboard() {
-      try {
-        const response = await fetch('/api/leaderboard')
-        const data = await response.json()
-        setUsers(data)
-      } catch (error) {
-        console.error('Failed to fetch leaderboard:', error)
-      } finally {
-        setIsLoading(false)
-      }
+  const refreshLeaderboard = useCallback(async () => {
+    if (!session?.user?.id) return
+    
+    setIsRefreshing(true)
+    try {
+      const response = await fetch('/api/leaderboard')
+      if (!response.ok) throw new Error('Failed to fetch leaderboard')
+      const data = await response.json()
+      setLeaderboard(data)
+    } catch (error) {
+      console.error('Failed to fetch leaderboard:', error)
+    } finally {
+      setIsRefreshing(false)
+      setIsLoading(false)
     }
+  }, [session?.user?.id])
 
-    fetchLeaderboard()
-  }, [])
-
+  // Refresh when localScore changes
   useEffect(() => {
-    if (localScore !== undefined && session?.user?.id) {
-      setUsers(prevUsers => 
-        prevUsers.map(user => 
-          user.id === session.user?.id 
+    refreshLeaderboard()
+  }, [localScore, refreshLeaderboard])
+
+  // Optimistically update local user's score
+  useEffect(() => {
+    const userId = session?.user?.id
+    if (localScore !== undefined && userId) {
+      setLeaderboard(prev => {
+        const updated = prev.map(user => 
+          user.id === userId
             ? { ...user, score: localScore }
             : user
         )
-      )
+        return [...updated].sort((a, b) => b.score - a.score)
+      })
     }
   }, [localScore, session?.user?.id])
 
-  const currentUser = users.find(u => u.id === session?.user?.id)
+  const currentUser = leaderboard.find(u => u.id === session?.user?.id)
   const effectiveScore = localScore !== undefined ? localScore : currentUser?.score ?? 0
   const currentRank = getRank(effectiveScore)
   const nextRank = SCORING_RULES.RANKS[SCORING_RULES.RANKS.findIndex(r => r.name === currentRank.name) + 1]
@@ -62,13 +74,27 @@ export default function LeaderboardCard({ localScore }: LeaderboardCardProps) {
     ? ((effectiveScore) - currentRank.minScore) / (nextRank.minScore - currentRank.minScore) * 100
     : 100
 
-  const sortedUsers = [...users].sort((a, b) => b.score - a.score)
+  const sortedUsers = [...leaderboard].sort((a, b) => b.score - a.score)
 
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <h2 className="text-xl font-semibold">Leaderboard</h2>
-        <Trophy className="h-5 w-5 text-yellow-500" />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={refreshLeaderboard}
+            disabled={isRefreshing}
+            className={cn(
+              "h-8 w-8 transition-all",
+              isRefreshing && "animate-spin"
+            )}
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+          <Trophy className="h-5 w-5 text-yellow-500" />
+        </div>
       </CardHeader>
       
       {currentUser && (

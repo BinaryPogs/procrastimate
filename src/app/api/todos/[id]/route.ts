@@ -20,8 +20,8 @@ export async function PATCH(
 
   try {
     const { completed } = await request.json()
-    const now = new Date()
     const { id } = await context.params
+    const now = new Date()
 
     const todo = await prisma.todo.findUnique({
       where: { 
@@ -34,50 +34,65 @@ export async function PATCH(
       return NextResponse.json({ error: 'Todo not found' }, { status: 404 })
     }
 
-    const points = completed && !todo.pointsAwarded ? calculateTaskPoints(todo, now) : null;
-    
-    if (points) {
-      const [updatedTodo, updatedUser] = await prisma.$transaction([
-        prisma.todo.update({
-          where: { id },
-          data: { 
-            completed,
-            pointsAwarded: true
-          }
-        }),
-        prisma.user.update({
-          where: { id: session.user.id },
-          data: {
-            score: { increment: points }
-          },
-          select: {
-            id: true,
-            score: true,
-            name: true,
-            image: true
-          }
-        })
-      ])
-
-      await revalidatePath('/api/todos')
-      await revalidatePath('/api/leaderboard')
-
-      return NextResponse.json({ 
-        todo: updatedTodo, 
-        points,
-        user: updatedUser 
-      })
+    // Only allow uncompleting a task once
+    if (!completed && !todo.completed) {
+      return NextResponse.json({ error: 'Task is already uncompleted' }, { status: 400 })
     }
 
-    const updatedTodo = await prisma.todo.update({
-      where: { id },
-      data: { completed }
+    // Prevent toggling completed tasks that have been amended once
+    if (!completed && todo.completed && todo.amendedOnce) {
+      return NextResponse.json({ error: 'Cannot uncheck a completed task more than once' }, { status: 400 })
+    }
+
+    const points = calculateTaskPoints({
+      completed,
+      pointsAwarded: todo.pointsAwarded,
+      amendedOnce: todo.amendedOnce
+    }, now)
+
+    console.log('Points calculation:', {
+      newCompleted: completed,
+      currentCompleted: todo.completed,
+      pointsAwarded: todo.pointsAwarded,
+      amendedOnce: todo.amendedOnce,
+      points
     })
+
+    const [updatedTodo, updatedUser] = await prisma.$transaction([
+      prisma.todo.update({
+        where: { id },
+        data: { 
+          completed,
+          pointsAwarded: completed ? (!todo.amendedOnce) : false,
+          amendedOnce: !completed && todo.completed ? true : todo.amendedOnce
+        }
+      }),
+      prisma.user.update({
+        where: { id: session.user.id },
+        data: {
+          score: { increment: points }
+        },
+        select: {
+          id: true,
+          score: true,
+          name: true,
+          image: true
+        }
+      })
+    ])
+
+    console.log('Todo before update:', todo)
+    console.log('Points calculated:', points)
+    console.log('Updated user:', updatedUser)
 
     await revalidatePath('/api/todos')
     await revalidatePath('/api/leaderboard')
 
-    return NextResponse.json({ todo: updatedTodo })
+    return NextResponse.json({ 
+      todo: updatedTodo, 
+      points,
+      user: updatedUser 
+    })
   } catch (error) {
     console.error('Failed to update todo:', error)
     return NextResponse.json({ error: 'Failed to update todo' }, { status: 500 })

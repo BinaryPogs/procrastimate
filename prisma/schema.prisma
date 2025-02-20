@@ -78,6 +78,7 @@ model Todo {
     points        Int      @default(10)
     deadline      DateTime
     failed        Boolean  @default(false)
+    amendedOnce   Boolean  @default(false)
 
     @@index([userId, completed, deadline])
     @@index([userId, failed])
