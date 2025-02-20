@@ -28,30 +28,24 @@ export async function POST(request: Request) {
   }
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id }
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
     const { title } = await request.json()
     if (!title?.trim()) {
       return NextResponse.json({ error: 'Title is required' }, { status: 400 })
     }
 
-    // Set deadline to end of current day
-    const deadline = new Date()
-    deadline.setHours(23, 59, 59, 999)
+    // Set deadline to end of current day (11:59 PM)
+    const now = new Date()
+    const deadline = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      23, 59, 59
+    )
 
     const todo = await prisma.todo.create({
       data: {
         title: title.trim(),
-        userId: user.id,  // Use verified user ID
+        userId: session.user.id,
         deadline,
         points: 10,
         completed: false,
@@ -59,7 +53,6 @@ export async function POST(request: Request) {
       }
     })
 
-    console.log('Created todo:', todo)
     return NextResponse.json(todo)
   } catch (error) {
     console.error('Failed to create todo:', error)

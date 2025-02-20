@@ -6,6 +6,13 @@ import { Card, CardHeader, CardContent } from '@/components/ui/card'
 import AddTodoForm from '@/components/todo/AddTodoForm'
 import TodoItem from '@/components/todo/TodoItem'
 import { toast } from 'sonner'
+import { Info } from 'lucide-react'
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card"
+import { Button } from "@/components/ui/button"
 
 interface Todo {
   id: string
@@ -136,7 +143,30 @@ export default function TodoList() {
   return (
     <Card>
       <CardHeader>
-        <h2 className="text-2xl font-semibold">Your Tasks</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-semibold">Your Tasks</h2>
+          <HoverCard>
+            <HoverCardTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Info className="h-5 w-5 text-muted-foreground" />
+              </Button>
+            </HoverCardTrigger>
+            <HoverCardContent className="w-80">
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold">How Points Work</h4>
+                <div className="text-sm text-muted-foreground space-y-1">
+                  <p>• Each task is worth 10 base points</p>
+                  <p>• Complete tasks early for +5 bonus points</p>
+                  <p>• Failed tasks (not completed by end of day) lose 5 points</p>
+                  <p>• Compete with friends on the leaderboard</p>
+                </div>
+                <div className="mt-4 text-xs">
+                  <span className="font-medium">Pro tip:</span> Complete tasks early in the day for maximum points!
+                </div>
+              </div>
+            </HoverCardContent>
+          </HoverCard>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <AddTodoForm onAdd={addTodo} />

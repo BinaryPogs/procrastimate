@@ -5,29 +5,21 @@ import { pusherServer } from '@/lib/pusher'
 
 export async function POST(request: Request) {
   const session = await getServerSession(authOptions)
-  if (!session?.user) {
+  if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const data = await request.text()
-  const [socketId, channelName] = data
-    .split('&')
-    .map(str => str.split('=')[1])
+  const [socketId, channelName] = data.split('&').map(str => str.split('=')[1])
 
-  const presenceData = {
+  const authResponse = pusherServer.authorizeChannel(socketId, channelName, {
     user_id: session.user.id,
     user_info: {
       name: session.user.name,
       email: session.user.email,
-      image: session.user.image,
-    },
-  }
-
-  const authResponse = pusherServer.authorizeChannel(
-    socketId,
-    channelName,
-    presenceData
-  )
+      image: session.user.image
+    }
+  })
 
   return NextResponse.json(authResponse)
 } 

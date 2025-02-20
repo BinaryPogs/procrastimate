@@ -10,16 +10,28 @@ export const getDatabaseUrl = () => {
 // Update this in your prisma.ts or wherever you initialize PrismaClient
 import { PrismaClient } from '@prisma/client'
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined
+const prismaClientSingleton = () => {
+  return new PrismaClient({
+    log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    datasources: {
+      db: {
+        url: getDatabaseUrl(),
+      },
+    },
+  })
 }
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient({
-  datasources: {
-    db: {
-      url: getDatabaseUrl(),
-    },
-  },
-})
+declare global {
+  // eslint-disable-next-line no-var
+  var prisma: ReturnType<typeof prismaClientSingleton> | undefined
+}
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma 
+declare global {
+  interface Global {
+    prisma: ReturnType<typeof prismaClientSingleton> | undefined
+  }
+}
+
+export const prisma = globalThis.prisma ?? prismaClientSingleton()
+
+if (process.env.NODE_ENV !== 'production') globalThis.prisma = prisma 

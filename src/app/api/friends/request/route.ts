@@ -13,65 +13,45 @@ export async function POST(request: Request) {
   try {
     const { receiverId } = await request.json()
 
-    // Check if friendship already exists
-    const existingFriendship = await prisma.friendship.findUnique({
+    // Check for any existing friendship (including rejected ones)
+    const existingFriendship = await prisma.friendship.findFirst({
       where: {
-        requesterId_receiverId: {
-          requesterId: session.user.id,
-          receiverId: receiverId,
-        },
-      },
+        OR: [
+          {
+            requesterId: session.user.id,
+            receiverId: receiverId,
+          },
+          {
+            requesterId: receiverId,
+            receiverId: session.user.id,
+          }
+        ]
+      }
     })
 
-    if (existingFriendship) {
+    // If there's a rejected friendship, delete it first
+    if (existingFriendship?.status === 'REJECTED') {
+      await prisma.friendship.delete({
+        where: { id: existingFriendship.id }
+      })
+    } else if (existingFriendship) {
       return NextResponse.json(
-        { error: 'Friend request already sent' },
+        { error: 'Friend request already exists' },
         { status: 400 }
       )
     }
 
-    // Check reverse friendship
-    const reverseExistingFriendship = await prisma.friendship.findUnique({
-      where: {
-        requesterId_receiverId: {
-          requesterId: receiverId,
-          receiverId: session.user.id,
-        },
-      },
-    })
-
-    if (reverseExistingFriendship) {
-      return NextResponse.json(
-        { error: 'Friend request already received from this user' },
-        { status: 400 }
-      )
-    }
-
-    // Create new friendship
+    // Create new friendship request
     const friendship = await prisma.friendship.create({
       data: {
         requesterId: session.user.id,
-        receiverId: receiverId,
-        status: 'PENDING',
+        receiverId,
+        status: 'PENDING'
       },
       include: {
-        requester: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-        receiver: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-      },
+        requester: true,
+        receiver: true
+      }
     })
 
     // Trigger real-time update

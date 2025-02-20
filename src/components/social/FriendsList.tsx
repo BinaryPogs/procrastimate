@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Card, CardHeader, CardContent } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -73,14 +73,50 @@ export default function FriendsList() {
 
   const debouncedSearchQuery = useDebounce(searchQuery, 300)
 
+  // Memoize derived data
+  const pendingRequests = useMemo(() => 
+    friendships.filter(f => f.status === 'PENDING' && f.receiverId === session?.user?.id),
+    [friendships, session?.user?.id]
+  )
+
+  const friends = useMemo(() => 
+    friendships.filter(f => f.status === 'ACCEPTED'),
+    [friendships]
+  )
+
+  // Memoize handlers
+  const getFriendRequestStatus = useCallback((userId: string) => {
+    const request = friendships.find(f => 
+      (f.requesterId === session?.user?.id && f.receiverId === userId) ||
+      (f.receiverId === session?.user?.id && f.requesterId === userId)
+    )
+    
+    if (!request) return null
+    return {
+      status: request.status,
+      isOutgoing: request.requesterId === session?.user?.id
+    }
+  }, [friendships, session?.user?.id])
+
+  const [isUpdating, setIsUpdating] = useState(false)
+
   const handleSearch = useCallback(async (query: string) => {
     if (!session?.user?.id) {
       toast.error('Please sign in to search users')
       return
     }
 
+    const userId = session.user.id
     setIsSearching(true)
+
     try {
+      // First fetch latest friendships
+      const friendshipsResponse = await fetch('/api/friends/request')
+      if (!friendshipsResponse.ok) throw new Error('Failed to fetch friendships')
+      const friendshipsData = await friendshipsResponse.json()
+      setFriendships(friendshipsData)
+
+      // Then do the search
       const response = await fetch(
         `/api/friends/search?q=${encodeURIComponent(query)}&filter=${searchFilter}`
       )
@@ -90,14 +126,21 @@ export default function FriendsList() {
       }
       const data = await response.json()
       
+      // Filter with updated friendships
       setSearchResults(data.users.filter((user: User) => {
-        const isExistingFriend = friendships.some(
-          f => f.requesterId === user.id || f.receiverId === user.id
+        if (user.id === userId) return false
+
+        const friendship = friendshipsData.find(
+          (f: Friendship) => (f.requesterId === user.id && f.receiverId === userId) ||
+                         (f.receiverId === user.id && f.requesterId === userId)
         )
-        const isPendingRequest = friendships.some(
-          f => f.requesterId === user.id || f.receiverId === user.id
-        )
-        return !isExistingFriend && !isPendingRequest
+        
+        if (!friendship) return true
+        if (friendship.status === 'REJECTED') return true
+        if (friendship.status === 'PENDING') return false
+        if (friendship.status === 'ACCEPTED') return false
+        
+        return true
       }))
     } catch (error: unknown) {
       const err = error as Error
@@ -106,20 +149,40 @@ export default function FriendsList() {
     } finally {
       setIsSearching(false)
     }
-  }, [session?.user?.id, searchFilter, friendships])
+  }, [session?.user?.id, searchFilter])
+
+  const fetchRecommendations = useCallback(async () => {
+    if (!session?.user?.id) return
+
+    try {
+      const response = await fetch('/api/friends/recommendations')
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to fetch recommendations')
+      }
+      const data = await response.json()
+      setSearchResults(data.users)
+    } catch (error) {
+      console.error('Failed to fetch recommendations:', error)
+    }
+  }, [session?.user?.id])
 
   useEffect(() => {
     if (debouncedSearchQuery && session?.user?.id) {
       handleSearch(debouncedSearchQuery)
+    } else if (session?.user?.id) {
+      fetchRecommendations()
     } else {
       setSearchResults([])
     }
-  }, [debouncedSearchQuery, searchFilter, session?.user?.id, handleSearch])
+  }, [debouncedSearchQuery, searchFilter, session?.user?.id, handleSearch, fetchRecommendations])
 
   useEffect(() => {
-    if (session?.user?.id) {
+    if (session?.user?.id && pusherClient) {
+      // Fetch friendships first
       fetchFriendships()
 
+      // Then set up Pusher connections
       const channel = pusherClient.subscribe(`user-${session.user.id}`)
       const presenceChannel = pusherClient.subscribe('presence-online') as PusherChannel
 
@@ -180,6 +243,7 @@ export default function FriendsList() {
 
   const fetchFriendships = async () => {
     try {
+      setIsLoading(true)
       const response = await fetch('/api/friends/request')
       if (!response.ok) throw new Error('Failed to fetch friendships')
       const data = await response.json()
@@ -194,6 +258,7 @@ export default function FriendsList() {
   }
 
   const sendFriendRequest = async (userId: string) => {
+    setIsUpdating(true)
     try {
       const response = await fetch('/api/friends/request', {
         method: 'POST',
@@ -212,6 +277,8 @@ export default function FriendsList() {
       const err = error as Error
       console.error('Failed to send friend request:', err)
       toast.error(err.message || 'Failed to send friend request')
+    } finally {
+      setIsUpdating(false)
     }
   }
 
@@ -264,22 +331,6 @@ export default function FriendsList() {
       const err = error as Error
       console.error('Failed to cancel friend request:', err)
       toast.error(err.message || 'Failed to cancel friend request')
-    }
-  }
-
-  const pendingRequests = friendships.filter(f => f.status === 'PENDING' && f.receiverId === session?.user?.id)
-  const friends = friendships.filter(f => f.status === 'ACCEPTED')
-
-  const getFriendRequestStatus = (userId: string) => {
-    const request = friendships.find(f => 
-      (f.requesterId === session?.user?.id && f.receiverId === userId) ||
-      (f.receiverId === session?.user?.id && f.requesterId === userId)
-    )
-    
-    if (!request) return null
-    return {
-      status: request.status,
-      isOutgoing: request.requesterId === session?.user?.id
     }
   }
 
@@ -426,8 +477,13 @@ export default function FriendsList() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => sendFriendRequest(user.id)}
+                                disabled={isUpdating}
                               >
-                                Add Friend
+                                {isUpdating ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  'Add Friend'
+                                )}
                               </Button>
                             )
                           })()}

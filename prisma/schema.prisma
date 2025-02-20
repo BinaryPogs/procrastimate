@@ -54,6 +54,8 @@ model User {
     friendsReceived  Friendship[] @relation("receiver")
     password         String?
     score            Int          @default(0)
+
+    @@index([isGuest, createdAt])
 }
 
 model VerificationToken {
@@ -89,4 +91,6 @@ model Friendship {
     receiver  User @relation("receiver", fields: [receiverId], references: [id], onDelete: Cascade)
 
     @@unique([requesterId, receiverId])
+    @@index([requesterId, status])
+    @@index([receiverId, status])
 }

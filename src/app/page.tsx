@@ -1,13 +1,17 @@
-'use client'
+import TodoList from "@/components/todo/TodoList"
+import LeaderboardCard from "@/components/leaderboard/LeaderboardCard"
+import FriendsList from "@/components/social/FriendsList"
+import AuthButtons from "@/components/auth/AuthButtons"
+import { WelcomeScreen } from '@/components/welcome/welcome-screen'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
 
-import TodoList from "@/components/todo/TodoList";
-import LeaderboardCard from "@/components/leaderboard/LeaderboardCard";
-import FriendsList from "@/components/social/FriendsList";
-import AuthButtons from "@/components/auth/AuthButtons";
-import { useSession } from "next-auth/react";
+export default async function Home() {
+  const session = await getServerSession(authOptions)
 
-export default function Home() {
-  const { data: session } = useSession();
+  if (!session) {
+    return <WelcomeScreen />
+  }
 
   return (
     <div className="min-h-screen bg-[#FFFBE3]">
@@ -22,23 +26,11 @@ export default function Home() {
           </div>
           
           <div className="bg-white/50 rounded-lg p-6 shadow-sm">
-            {session ? (
-              <div className="space-y-2">
-                <h2 className="text-2xl font-semibold">
-                  Welcome back, {session.user?.name}!
-                </h2>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <h2 className="text-2xl font-semibold">
-                  Welcome to Procrastimate
-                </h2>
-                <p className="text-muted-foreground">
-                  Your friendly todo list that helps you get things done. 
-                  Sign in to start tracking your tasks!
-                </p>
-              </div>
-            )}
+            <div className="space-y-2">
+              <h2 className="text-2xl font-semibold">
+                Welcome back, {session.user?.name}!
+              </h2>
+            </div>
           </div>
         </div>
 
@@ -55,5 +47,5 @@ export default function Home() {
         </div>
       </main>
     </div>
-  );
+  )
 }
