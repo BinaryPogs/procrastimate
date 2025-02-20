@@ -26,6 +26,16 @@ const signUpSchema = z.object({
 
 type SignUpValues = z.infer<typeof signUpSchema>
 
+interface AuthError {
+  message: string;
+}
+
+interface SignInResult {
+  error: string | null;
+  ok?: boolean;
+  url?: string;
+}
+
 export default function SignUpForm() {
   const [isLoading, setIsLoading] = useState(false)
 
@@ -55,13 +65,23 @@ export default function SignUpForm() {
       toast.success('Account created successfully!')
       
       // Sign in the user
-      await signIn('credentials', {
+      const result = await signIn('credentials', {
         email: values.email,
         password: values.password,
         callbackUrl: '/',
-      })
-    } catch (error: any) {
-      toast.error(error.message)
+        redirect: false,
+      }) as SignInResult
+
+      if (result?.error) {
+        throw new Error(result.error)
+      }
+
+      if (result?.url) {
+        window.location.href = result.url
+      }
+    } catch (error: unknown) {
+      const authError = error as AuthError
+      toast.error(authError.message || 'Failed to create account')
     } finally {
       setIsLoading(false)
     }

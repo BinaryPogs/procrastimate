@@ -38,10 +38,13 @@ function getPasswordStrength(password: string): number {
   return strength
 }
 
+interface AuthError {
+  message: string;
+}
+
 export default function AuthOptions() {
   const [authMode, setAuthMode] = useState<AuthMode>(null)
   const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isSignUp, setIsSignUp] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
@@ -90,8 +93,9 @@ export default function AuthOptions() {
       if (result?.ok) {
         window.location.href = '/'
       }
-    } catch (error: any) {
-      toast.error(error.message)
+    } catch (error: unknown) {
+      const authError = error as AuthError
+      toast.error(authError.message || 'Authentication failed')
     } finally {
       setIsLoading(false)
     }
@@ -105,36 +109,13 @@ export default function AuthOptions() {
     await signIn('email', { email })
   }
 
-  const handleCredentialsLogin = async () => {
-    if (!email.trim() || !password.trim()) {
-      toast.error('Please enter both email and password')
-      return
-    }
-    setIsLoading(true)
-    try {
-      await signIn('credentials', {
-        email,
-        password,
-        callbackUrl: '/',
-      })
-    } catch (error) {
-      toast.error('Failed to sign in')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleSignUp = () => {
-    // Implementation of handleSignUp function
-  }
-
   if (authMode === 'email') {
     return (
       <>
         <DialogHeader>
           <DialogTitle>Sign in with Email</DialogTitle>
           <DialogDescription>
-            We'll send you a magic link to sign in
+            We&apos;ll send you a magic link to sign in
           </DialogDescription>
         </DialogHeader>
         <div className="py-4">

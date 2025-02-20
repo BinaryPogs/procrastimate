@@ -27,7 +27,7 @@ interface TodoItemProps {
   onDelete: (id: string) => Promise<void>
 }
 
-export default function TodoItem({ todo, onToggle, onDelete }: TodoItemProps) {
+export default function TodoItem({ todo, onToggle }: TodoItemProps) {
   const [isAnimating, setIsAnimating] = useState(false)
 
   const handleStatusChange = (completed: boolean) => {

@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Card, CardHeader, CardContent } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { FaUserPlus, FaSearch, FaCheck, FaTimes } from "react-icons/fa"
+import { FaUserPlus, FaCheck, FaTimes } from "react-icons/fa"
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog"
@@ -43,6 +43,23 @@ interface OnlineUser {
   }
 }
 
+interface PusherMembers {
+  each: (callback: (member: OnlineUser) => void) => void
+}
+
+interface PusherEvent {
+  type: string
+  friendship: Friendship
+}
+
+interface PusherChannel {
+  bind(event: 'pusher:subscription_succeeded', callback: (members: PusherMembers) => void): void;
+  bind(event: 'pusher:member_added' | 'pusher:member_removed', callback: (member: OnlineUser) => void): void;
+  bind(event: string, callback: (data: PusherEvent) => void): void;
+  unbind_all: () => void;
+  unsubscribe: () => void;
+}
+
 export default function FriendsList() {
   const { data: session } = useSession()
   const [searchQuery, setSearchQuery] = useState('')
@@ -55,22 +72,57 @@ export default function FriendsList() {
 
   const debouncedSearchQuery = useDebounce(searchQuery, 300)
 
+  const handleSearch = useCallback(async (query: string) => {
+    if (!session?.user?.id) {
+      toast.error('Please sign in to search users')
+      return
+    }
+
+    setIsSearching(true)
+    try {
+      const response = await fetch(
+        `/api/friends/search?q=${encodeURIComponent(query)}&filter=${searchFilter}`
+      )
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Search failed')
+      }
+      const data = await response.json()
+      
+      setSearchResults(data.users.filter((user: User) => {
+        const isExistingFriend = friendships.some(
+          f => f.requesterId === user.id || f.receiverId === user.id
+        )
+        const isPendingRequest = friendships.some(
+          f => f.requesterId === user.id || f.receiverId === user.id
+        )
+        return !isExistingFriend && !isPendingRequest
+      }))
+    } catch (error: unknown) {
+      const err = error as Error
+      console.error('Failed to search users:', err)
+      toast.error(err.message || 'Failed to search users')
+    } finally {
+      setIsSearching(false)
+    }
+  }, [session?.user?.id, searchFilter, friendships])
+
   useEffect(() => {
     if (debouncedSearchQuery && session?.user?.id) {
       handleSearch(debouncedSearchQuery)
     } else {
       setSearchResults([])
     }
-  }, [debouncedSearchQuery, searchFilter, session?.user?.id])
+  }, [debouncedSearchQuery, searchFilter, session?.user?.id, handleSearch])
 
   useEffect(() => {
     if (session?.user?.id) {
       fetchFriendships()
 
       const channel = pusherClient.subscribe(`user-${session.user.id}`)
-      const presenceChannel = pusherClient.subscribe('presence-online') as any
+      const presenceChannel = pusherClient.subscribe('presence-online') as PusherChannel
 
-      presenceChannel.bind('pusher:subscription_succeeded', (members: any) => {
+      presenceChannel.bind('pusher:subscription_succeeded', (members: PusherMembers) => {
         const onlineUserIds = new Set<string>()
         members.each((member: OnlineUser) => {
           onlineUserIds.add(member.user_id)
@@ -122,7 +174,7 @@ export default function FriendsList() {
     if (session?.user?.id) {
       handleSearch('')
     }
-  }, [session?.user?.id])
+  }, [session?.user?.id, handleSearch])
 
   const fetchFriendships = async () => {
     try {
@@ -130,42 +182,12 @@ export default function FriendsList() {
       if (!response.ok) throw new Error('Failed to fetch friendships')
       const data = await response.json()
       setFriendships(data)
-    } catch (error) {
+    } catch (error: unknown) {
+      const err = error as Error
+      console.error('Failed to load friends:', err)
       toast.error('Failed to load friends')
     } finally {
       setIsLoading(false)
-    }
-  }
-
-  const handleSearch = async (query: string) => {
-    if (!session?.user?.id) {
-      toast.error('Please sign in to search users')
-      return
-    }
-
-    setIsSearching(true)
-    try {
-      const response = await fetch(
-        `/api/friends/search?q=${encodeURIComponent(query)}&filter=${searchFilter}`
-      )
-      if (!response.ok) throw new Error('Search failed')
-      const data = await response.json()
-      
-      const filteredUsers = data.users.filter((user: User) => {
-        const isExistingFriend = friendships.some(
-          f => f.requesterId === user.id || f.receiverId === user.id
-        )
-        const isPendingRequest = friendships.some(
-          f => f.requesterId === user.id || f.receiverId === user.id
-        )
-        return !isExistingFriend && !isPendingRequest
-      })
-      
-      setSearchResults(filteredUsers)
-    } catch (error) {
-      toast.error('Failed to search users')
-    } finally {
-      setIsSearching(false)
     }
   }
 
@@ -184,8 +206,10 @@ export default function FriendsList() {
       
       toast.success('Friend request sent!')
       fetchFriendships()
-    } catch (error: any) {
-      toast.error(error.message)
+    } catch (error: unknown) {
+      const err = error as Error
+      console.error('Failed to send friend request:', err)
+      toast.error(err.message || 'Failed to send friend request')
     }
   }
 
@@ -197,11 +221,17 @@ export default function FriendsList() {
         body: JSON.stringify({ friendshipId, status }),
       })
       
-      if (!response.ok) throw new Error('Failed to update friend request')
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to update friend request')
+      }
+      
       toast.success(status === 'ACCEPTED' ? 'Friend request accepted!' : 'Friend request rejected')
       fetchFriendships()
-    } catch (error) {
-      toast.error('Failed to update friend request')
+    } catch (error: unknown) {
+      const err = error as Error
+      console.error('Failed to update friend request:', err)
+      toast.error(err.message || 'Failed to update friend request')
     }
   }
 
@@ -230,7 +260,7 @@ export default function FriendsList() {
         <CardContent className="flex flex-col items-center justify-center space-y-4 py-8">
           <div className="text-center space-y-2">
             <p className="text-muted-foreground">
-              Sign in to connect with friends and see who's online
+              Sign in to connect with friends and see who&apos;s online
             </p>
             <Dialog>
               <DialogTrigger asChild>

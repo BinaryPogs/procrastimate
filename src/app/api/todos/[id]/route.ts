@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '@/app/api/auth/[...nextauth]/route'
+import { authOptions } from '@/lib/auth'
+
+type RouteContext = {
+  params: Promise<{ id: string }>
+}
 
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: RouteContext
 ) {
+  const { id } = await params
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -15,7 +20,7 @@ export async function PATCH(
   const { completed } = await request.json()
   const todo = await prisma.todo.update({
     where: {
-      id: params.id,
+      id: id,
       userId: session.user.id,
     },
     data: { completed },
@@ -26,8 +31,9 @@ export async function PATCH(
 
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: RouteContext
 ) {
+  const { id } = await params
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -35,7 +41,7 @@ export async function DELETE(
 
   await prisma.todo.delete({
     where: {
-      id: params.id,
+      id: id,
       userId: session.user.id,
     },
   })

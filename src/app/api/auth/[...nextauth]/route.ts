@@ -1,10 +1,5 @@
-import { prisma } from "@/lib/prisma"
-import { PrismaAdapter } from "@auth/prisma-adapter"
-import NextAuth, { AuthOptions } from "next-auth"
-import GoogleProvider from "next-auth/providers/google"
-import EmailProvider from "next-auth/providers/email"
-import CredentialsProvider from "next-auth/providers/credentials"
-import bcrypt from 'bcrypt'
+import NextAuth from "next-auth"
+import { authOptions } from "@/lib/auth"
 
 /**
  * NextAuth Configuration
@@ -25,67 +20,6 @@ import bcrypt from 'bcrypt'
  * - NEXTAUTH_SECRET: Random string for JWT encryption
  * - NEXTAUTH_URL: Your website URL (http://localhost:3000 for development)
  */
-export const authOptions: AuthOptions = {
-  adapter: PrismaAdapter(prisma),
-  providers: [
-    GoogleProvider({
-      clientId: process.env.AUTH_GOOGLE_ID!,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET!,
-    }),
-    EmailProvider({
-      server: process.env.EMAIL_SERVER,
-      from: process.env.EMAIL_FROM,
-    }),
-    CredentialsProvider({
-      name: 'credentials',
-      credentials: {
-        email: { type: 'email' },
-        password: { type: 'password' }
-      },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          return null
-        }
-
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email }
-        })
-
-        if (!user || !user.password) {
-          return null
-        }
-
-        const passwordMatch = await bcrypt.compare(
-          credentials.password,
-          user.password
-        )
-
-        if (!passwordMatch) {
-          return null
-        }
-
-        return user
-      }
-    }),
-  ],
-  session: {
-    strategy: "jwt",
-  },
-  callbacks: {
-    session: ({ session, token }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: token.sub,
-      },
-    }),
-  },
-  pages: {
-    signIn: '/', // Use our custom sign in modal
-    error: '/', // Handle errors in our UI
-  },
-  secret: process.env.NEXTAUTH_SECRET,
-}
 
 const handler = NextAuth(authOptions)
 export { handler as GET, handler as POST }

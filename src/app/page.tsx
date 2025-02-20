@@ -27,12 +27,6 @@ export default function Home() {
                 <h2 className="text-2xl font-semibold">
                   Welcome back, {session.user?.name}!
                 </h2>
-                {session.user?.isGuest && (
-                  <p className="text-muted-foreground">
-                    You're currently using a guest account. Your progress will be saved, 
-                    but you might want to consider signing up for a full account to access all features.
-                  </p>
-                )}
               </div>
             ) : (
               <div className="space-y-2">

@@ -16,6 +16,10 @@ interface Todo {
   updatedAt: Date
 }
 
+interface ApiError {
+  message: string;
+}
+
 export default function TodoList() {
   const { data: session } = useSession()
   const [todos, setTodos] = useState<Todo[]>([])
@@ -30,11 +34,16 @@ export default function TodoList() {
   const fetchTodos = async () => {
     try {
       const response = await fetch('/api/todos')
-      if (!response.ok) throw new Error('Failed to fetch todos')
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to fetch todos')
+      }
       const data = await response.json()
       setTodos(data)
-    } catch (error) {
-      toast.error('Failed to load todos')
+    } catch (error: unknown) {
+      const err = error as ApiError
+      console.error('Failed to load todos:', err)
+      toast.error(err.message || 'Failed to load todos')
     } finally {
       setIsLoading(false)
     }
@@ -48,14 +57,17 @@ export default function TodoList() {
         body: JSON.stringify({ title }),
       })
       
-      if (!response.ok) throw new Error('Failed to add todo')
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to add todo')
+      }
       const newTodo = await response.json()
-      
-      // Update local state immediately
       setTodos(prev => [newTodo, ...prev])
       toast.success('Todo added')
-    } catch (error) {
-      toast.error('Failed to add todo')
+    } catch (error: unknown) {
+      const err = error as ApiError
+      console.error('Failed to add todo:', err)
+      toast.error(err.message || 'Failed to add todo')
     }
   }
 
@@ -67,14 +79,18 @@ export default function TodoList() {
         body: JSON.stringify({ completed }),
       })
       
-      if (!response.ok) throw new Error('Failed to update todo')
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to update todo')
+      }
       
-      // Update local state immediately
       setTodos(prev => prev.map(todo => 
         todo.id === id ? { ...todo, completed } : todo
       ))
-    } catch (error) {
-      toast.error('Failed to update todo')
+    } catch (error: unknown) {
+      const err = error as ApiError
+      console.error('Failed to update todo:', err)
+      toast.error(err.message || 'Failed to update todo')
     }
   }
 
@@ -84,13 +100,17 @@ export default function TodoList() {
         method: 'DELETE',
       })
       
-      if (!response.ok) throw new Error('Failed to delete todo')
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to delete todo')
+      }
       
-      // Update local state immediately
       setTodos(prev => prev.filter(todo => todo.id !== id))
       toast.success('Todo deleted')
-    } catch (error) {
-      toast.error('Failed to delete todo')
+    } catch (error: unknown) {
+      const err = error as ApiError
+      console.error('Failed to delete todo:', err)
+      toast.error(err.message || 'Failed to delete todo')
     }
   }
 
