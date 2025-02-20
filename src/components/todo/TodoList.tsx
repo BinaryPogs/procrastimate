@@ -14,6 +14,9 @@ interface Todo {
   userId: string
   createdAt: Date
   updatedAt: Date
+  points: number
+  deadline: Date
+  failed: boolean
 }
 
 interface ApiError {
@@ -34,11 +37,12 @@ export default function TodoList() {
   const fetchTodos = async () => {
     try {
       const response = await fetch('/api/todos')
+      const data = await response.json()
+      
       if (!response.ok) {
-        const data = await response.json()
         throw new Error(data.error || 'Failed to fetch todos')
       }
-      const data = await response.json()
+      
       setTodos(data)
     } catch (error: unknown) {
       const err = error as ApiError
@@ -56,13 +60,13 @@ export default function TodoList() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title }),
       })
+      const data = await response.json()
       
       if (!response.ok) {
-        const data = await response.json()
         throw new Error(data.error || 'Failed to add todo')
       }
-      const newTodo = await response.json()
-      setTodos(prev => [newTodo, ...prev])
+      
+      setTodos(prev => [data, ...prev])
       toast.success('Todo added')
     } catch (error: unknown) {
       const err = error as ApiError
@@ -78,19 +82,21 @@ export default function TodoList() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed }),
       })
+      const data = await response.json()
       
       if (!response.ok) {
-        const data = await response.json()
         throw new Error(data.error || 'Failed to update todo')
       }
       
       setTodos(prev => prev.map(todo => 
-        todo.id === id ? { ...todo, completed } : todo
+        todo.id === id ? data : todo
       ))
+      return data
     } catch (error: unknown) {
       const err = error as ApiError
       console.error('Failed to update todo:', err)
       toast.error(err.message || 'Failed to update todo')
+      throw err  // Re-throw to handle in TodoItem
     }
   }
 
@@ -99,9 +105,9 @@ export default function TodoList() {
       const response = await fetch(`/api/todos/${id}`, {
         method: 'DELETE',
       })
+      const data = await response.json()
       
       if (!response.ok) {
-        const data = await response.json()
         throw new Error(data.error || 'Failed to delete todo')
       }
       

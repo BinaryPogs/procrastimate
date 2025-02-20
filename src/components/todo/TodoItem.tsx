@@ -11,28 +11,45 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { format } from 'date-fns'
+import { Badge } from '@/components/ui/badge'
+import { toast } from 'sonner'
 
 interface Todo {
   id: string
   title: string
   completed: boolean
+  points: number
+  deadline: Date
+  failed: boolean
   userId?: string
   userName?: string
-  dueDate?: Date
 }
 
 interface TodoItemProps {
   todo: Todo
-  onToggle: (id: string, completed: boolean) => Promise<void>
+  onToggle: (id: string, completed: boolean) => Promise<Todo>
   onDelete: (id: string) => Promise<void>
 }
 
 export default function TodoItem({ todo, onToggle }: TodoItemProps) {
   const [isAnimating, setIsAnimating] = useState(false)
 
-  const handleStatusChange = (completed: boolean) => {
+  const handleStatusChange = async (completed: boolean) => {
     setIsAnimating(true)
-    onToggle(todo.id, completed)
+    try {
+      const response = await onToggle(todo.id, completed)
+      if (response.points) {
+        toast.success(
+          `Task completed! +${response.points} points${
+            response.points > todo.points ? ' (including bonus!)' : ''
+          }`
+        )
+      }
+    } catch (err) {
+      console.error('Failed to update task:', err)
+      toast.error('Failed to update task')
+    }
     setTimeout(() => setIsAnimating(false), 300)
   }
 
@@ -49,18 +66,27 @@ export default function TodoItem({ todo, onToggle }: TodoItemProps) {
           duration: 0.3,
           ease: "easeInOut"
         }}
-        className="flex items-center justify-between py-3 group"
+        className={`flex items-center justify-between py-3 group ${
+          todo.failed ? 'opacity-50' : ''
+        }`}
       >
         <div className="flex items-center space-x-4">
           <Checkbox
             checked={todo.completed}
             onCheckedChange={(checked) => handleStatusChange(checked as boolean)}
             className="h-5 w-5"
+            disabled={todo.failed}
           />
           <div>
             <p className={`text-sm font-medium ${todo.completed ? 'line-through text-gray-500' : ''}`}>
               {todo.title}
             </p>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{todo.points} points</span>
+              <span>•</span>
+              <span>Due {format(new Date(todo.deadline), 'h:mm a')}</span>
+              {todo.failed && <Badge variant="destructive">Failed</Badge>}
+            </div>
             {todo.userName && (
               <p className="text-xs text-gray-500">
                 Assigned to: {todo.userName}

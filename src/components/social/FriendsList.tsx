@@ -16,6 +16,7 @@ import { useDebounce } from '@/hooks/useDebounce'
 import { Loader2 } from 'lucide-react'
 import FriendSearchFilters, { SearchFilter } from '@/components/social/FriendSearchFilters'
 import AuthOptions from "@/components/auth/AuthOptions"
+import { soundPlayer } from '@/lib/sounds'
 
 interface User {
   id: string
@@ -145,6 +146,7 @@ export default function FriendsList() {
       channel.bind('friend-request', (data: { type: string, friendship: Friendship }) => {
         if (data.type === 'NEW_REQUEST') {
           setFriendships(prev => [...prev, data.friendship])
+          soundPlayer.playNotification()
           toast.info(`New friend request from ${data.friendship.requester.name}`)
         }
       })
@@ -232,6 +234,36 @@ export default function FriendsList() {
       const err = error as Error
       console.error('Failed to update friend request:', err)
       toast.error(err.message || 'Failed to update friend request')
+    }
+  }
+
+  const cancelFriendRequest = async (userId: string) => {
+    try {
+      const friendship = friendships.find(f => 
+        f.status === 'PENDING' && 
+        f.requesterId === session?.user?.id && 
+        f.receiverId === userId
+      )
+      
+      if (!friendship) {
+        throw new Error('Friend request not found')
+      }
+
+      const response = await fetch(`/api/friends/request/${friendship.id}`, {
+        method: 'DELETE',
+      })
+      
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to cancel friend request')
+      }
+      
+      setFriendships(prev => prev.filter(f => f.id !== friendship.id))
+      toast.success('Friend request cancelled')
+    } catch (error: unknown) {
+      const err = error as Error
+      console.error('Failed to cancel friend request:', err)
+      toast.error(err.message || 'Failed to cancel friend request')
     }
   }
 
@@ -353,9 +385,9 @@ export default function FriendsList() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  disabled
+                                  onClick={() => cancelFriendRequest(user.id)}
                                 >
-                                  Request Sent
+                                  Cancel Request
                                 </Button>
                               ) : (
                                 <div className="flex gap-1">

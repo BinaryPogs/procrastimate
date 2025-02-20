@@ -28,9 +28,19 @@ export const authOptions: AuthOptions = {
           return null
         }
 
-        const user = await prisma.user.findUnique({
+        let user = await prisma.user.findUnique({
           where: { email: credentials.email }
         })
+
+        // Create user if doesn't exist (for development)
+        if (!user) {
+          user = await prisma.user.create({
+            data: {
+              email: credentials.email,
+              name: credentials.email.split('@')[0],
+            }
+          })
+        }
 
         if (!user || !user.password) {
           return null
@@ -53,17 +63,21 @@ export const authOptions: AuthOptions = {
     strategy: "jwt",
   },
   callbacks: {
-    session: ({ session, token }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: token.sub,
-      },
-    }),
+    session: ({ session, token }) => {
+      console.log('Session callback:', { session, token }) // Debug log
+      return {
+        ...session,
+        user: {
+          ...session.user,
+          id: token.sub,
+        },
+      }
+    },
   },
   pages: {
     signIn: '/',
     error: '/',
   },
   secret: process.env.NEXTAUTH_SECRET,
+  debug: process.env.NODE_ENV === 'development',
 } 
