@@ -13,17 +13,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { pusherClient } from '@/lib/pusher'
 import { Badge } from "@/components/ui/badge"
 import { useDebounce } from '@/hooks/useDebounce'
-import { Loader2 } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import FriendSearchFilters, { SearchFilter } from '@/components/social/FriendSearchFilters'
 import AuthOptions from "@/components/auth/AuthOptions"
 import { soundPlayer } from '@/lib/sounds'
+import { PresenceChannel as PusherPresenceChannel } from 'pusher-js'
+import { cn } from '@/lib/utils'
 
 interface User {
   id: string
-  name: string | null
-  email: string | null
-  image: string | null
-  isGuest: boolean
+  name?: string | null | undefined
+  email?: string | null | undefined
+  image?: string | null | undefined
+  isGuest?: boolean
 }
 
 interface Friendship {
@@ -35,9 +37,9 @@ interface Friendship {
   receiver: User
 }
 
-interface OnlineUser {
-  user_id: string
-  user_info: {
+interface PusherMember {
+  id: string
+  info: {
     name: string | null
     email: string | null
     image: string | null
@@ -45,20 +47,14 @@ interface OnlineUser {
 }
 
 interface PusherMembers {
-  each: (callback: (member: OnlineUser) => void) => void
+  members: Record<string, PusherMember>
+  count: number
+  myID: string
+  each: (callback: (member: PusherMember) => void) => void
 }
 
-interface PusherEvent {
-  type: string
-  friendship: Friendship
-}
-
-interface PusherChannel {
-  bind(event: 'pusher:subscription_succeeded', callback: (members: PusherMembers) => void): void;
-  bind(event: 'pusher:member_added' | 'pusher:member_removed', callback: (member: OnlineUser) => void): void;
-  bind(event: string, callback: (data: PusherEvent) => void): void;
-  unbind_all: () => void;
-  unsubscribe: () => void;
+interface OptimisticFriendship extends Friendship {
+  isOptimistic?: boolean
 }
 
 export default function FriendsList() {
@@ -66,10 +62,14 @@ export default function FriendsList() {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<User[]>([])
   const [isSearching, setIsSearching] = useState(false)
-  const [friendships, setFriendships] = useState<Friendship[]>([])
+  const [friendships, setFriendships] = useState<OptimisticFriendship[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set())
   const [searchFilter, setSearchFilter] = useState<SearchFilter>('all')
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set())
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [refreshCooldown, setRefreshCooldown] = useState(false)
+  const [refreshCountdown, setRefreshCountdown] = useState(0)
 
   const debouncedSearchQuery = useDebounce(searchQuery, 300)
 
@@ -97,8 +97,6 @@ export default function FriendsList() {
       isOutgoing: request.requesterId === session?.user?.id
     }
   }, [friendships, session?.user?.id])
-
-  const [isUpdating, setIsUpdating] = useState(false)
 
   const handleSearch = useCallback(async (query: string) => {
     if (!session?.user?.id) {
@@ -162,8 +160,10 @@ export default function FriendsList() {
       }
       const data = await response.json()
       setSearchResults(data.users)
-    } catch (error) {
-      console.error('Failed to fetch recommendations:', error)
+    } catch (error: unknown) {
+      const err = error as Error
+      console.error('Failed to fetch recommendations:', err)
+      toast.error(err.message || 'Failed to fetch recommendations')
     }
   }, [session?.user?.id])
 
@@ -179,29 +179,27 @@ export default function FriendsList() {
 
   useEffect(() => {
     if (session?.user?.id && pusherClient) {
-      // Fetch friendships first
       fetchFriendships()
 
-      // Then set up Pusher connections
       const channel = pusherClient.subscribe(`user-${session.user.id}`)
-      const presenceChannel = pusherClient.subscribe('presence-online') as PusherChannel
+      const presenceChannel = pusherClient.subscribe('presence-online') as PusherPresenceChannel
 
       presenceChannel.bind('pusher:subscription_succeeded', (members: PusherMembers) => {
         const onlineUserIds = new Set<string>()
-        members.each((member: OnlineUser) => {
-          onlineUserIds.add(member.user_id)
+        members.each((member) => {
+          onlineUserIds.add(member.id)
         })
         setOnlineUsers(onlineUserIds)
       })
 
-      presenceChannel.bind('pusher:member_added', (member: OnlineUser) => {
-        setOnlineUsers(prev => new Set(prev).add(member.user_id))
+      presenceChannel.bind('pusher:member_added', (member: PusherMember) => {
+        setOnlineUsers(prev => new Set(prev).add(member.id))
       })
 
-      presenceChannel.bind('pusher:member_removed', (member: OnlineUser) => {
+      presenceChannel.bind('pusher:member_removed', (member: PusherMember) => {
         setOnlineUsers(prev => {
           const next = new Set(prev)
-          next.delete(member.user_id)
+          next.delete(member.id)
           return next
         })
       })
@@ -258,7 +256,31 @@ export default function FriendsList() {
   }
 
   const sendFriendRequest = async (userId: string) => {
-    setIsUpdating(true)
+    if (pendingActions.has(userId)) return
+    setPendingActions(prev => new Set(prev).add(userId))
+
+    // Create optimistic friendship
+    const defaultUser = { 
+      id: '', 
+      name: null, 
+      email: null, 
+      image: null, 
+      isGuest: false 
+    }
+
+    const optimisticFriendship: OptimisticFriendship = {
+      id: `optimistic-${Date.now()}`,
+      requesterId: session?.user?.id || '',
+      receiverId: userId,
+      status: 'PENDING',
+      requester: session?.user || defaultUser,
+      receiver: searchResults.find(u => u.id === userId) || defaultUser,
+      isOptimistic: true
+    }
+
+    // Optimistic update
+    setFriendships(prev => [...prev, optimisticFriendship])
+
     try {
       const response = await fetch('/api/friends/request', {
         method: 'POST',
@@ -266,23 +288,45 @@ export default function FriendsList() {
         body: JSON.stringify({ receiverId: userId }),
       })
       
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Failed to send friend request')
-      }
+      if (!response.ok) throw new Error('Failed to send request')
+      
+      const realFriendship = await response.json()
+      
+      // Replace optimistic with real data
+      setFriendships(prev => prev.map(f => 
+        f.id === optimisticFriendship.id ? realFriendship : f
+      ))
       
       toast.success('Friend request sent!')
-      fetchFriendships()
+
+      // Fetch new recommendations after successful friend request
+      if (!searchQuery) {
+        await fetchRecommendations()
+      }
     } catch (error: unknown) {
       const err = error as Error
       console.error('Failed to send friend request:', err)
+      // Revert optimistic update
+      setFriendships(prev => prev.filter(f => f.id !== optimisticFriendship.id))
       toast.error(err.message || 'Failed to send friend request')
     } finally {
-      setIsUpdating(false)
+      setPendingActions(prev => {
+        const next = new Set(prev)
+        next.delete(userId)
+        return next
+      })
     }
   }
 
   const handleFriendRequest = async (friendshipId: string, status: 'ACCEPTED' | 'REJECTED') => {
+    if (pendingActions.has(friendshipId)) return
+    setPendingActions(prev => new Set(prev).add(friendshipId))
+
+    // Optimistic update
+    setFriendships(prev => prev.map(f => 
+      f.id === friendshipId ? { ...f, status } : f
+    ))
+
     try {
       const response = await fetch('/api/friends/request', {
         method: 'PATCH',
@@ -290,17 +334,33 @@ export default function FriendsList() {
         body: JSON.stringify({ friendshipId, status }),
       })
       
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Failed to update friend request')
+      if (!response.ok) throw new Error('Failed to update request')
+      
+      const updatedFriendship = await response.json()
+      
+      if (status === 'REJECTED') {
+        setFriendships(prev => prev.filter(f => f.id !== friendshipId))
+      } else {
+        setFriendships(prev => prev.map(f => 
+          f.id === friendshipId ? updatedFriendship : f
+        ))
       }
       
       toast.success(status === 'ACCEPTED' ? 'Friend request accepted!' : 'Friend request rejected')
-      fetchFriendships()
     } catch (error: unknown) {
       const err = error as Error
       console.error('Failed to update friend request:', err)
+      // Revert optimistic update
+      setFriendships(prev => prev.map(f => 
+        f.id === friendshipId ? { ...f, status: 'PENDING' } : f
+      ))
       toast.error(err.message || 'Failed to update friend request')
+    } finally {
+      setPendingActions(prev => {
+        const next = new Set(prev)
+        next.delete(friendshipId)
+        return next
+      })
     }
   }
 
@@ -331,6 +391,51 @@ export default function FriendsList() {
       const err = error as Error
       console.error('Failed to cancel friend request:', err)
       toast.error(err.message || 'Failed to cancel friend request')
+    }
+  }
+
+  const handleRefresh = async () => {
+    if (refreshCooldown) return
+
+    setIsRefreshing(true)
+    setRefreshCooldown(true)
+    setRefreshCountdown(30)
+
+    const timer = setInterval(() => {
+      setRefreshCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(timer)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    try {
+      await fetchFriendships()
+      if (searchQuery) {
+        await handleSearch(searchQuery)
+      } else {
+        await fetchRecommendations()
+      }
+      toast.success('Friend list refreshed')
+    } catch (error: unknown) {
+      const err = error as Error
+      console.error('Failed to refresh:', err)
+      toast.error(err.message || 'Failed to refresh')
+    } finally {
+      setIsRefreshing(false)
+      setTimeout(() => {
+        setRefreshCooldown(false)
+        clearInterval(timer)
+      }, 30000)
+    }
+  }
+
+  // Add a handler for dialog open
+  const handleDialogOpen = async (open: boolean) => {
+    if (open && !searchQuery) {
+      await fetchRecommendations()
     }
   }
 
@@ -365,7 +470,7 @@ export default function FriendsList() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <h2 className="text-xl font-semibold">Friends</h2>
-        <Dialog>
+        <Dialog onOpenChange={handleDialogOpen}>
           <DialogTrigger asChild>
             <Button variant="ghost" size="icon">
               <FaUserPlus className="h-4 w-4" />
@@ -375,8 +480,24 @@ export default function FriendsList() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Add Friend</DialogTitle>
-              <DialogDescription>
-                Search for users or choose from recommendations below
+              <DialogDescription className="flex items-center justify-between">
+                <span>Search for users to add as friends.</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRefresh}
+                  disabled={refreshCooldown || isRefreshing}
+                  className={cn(
+                    "transition-all duration-200",
+                    isRefreshing && "animate-spin"
+                  )}
+                >
+                  <RefreshCw className={cn(
+                    "h-4 w-4 mr-2",
+                    refreshCooldown && "opacity-50"
+                  )} />
+                  {refreshCooldown ? `${refreshCountdown}s` : 'Refresh'}
+                </Button>
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -477,9 +598,9 @@ export default function FriendsList() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => sendFriendRequest(user.id)}
-                                disabled={isUpdating}
+                                disabled={pendingActions.has(user.id)}
                               >
-                                {isUpdating ? (
+                                {pendingActions.has(user.id) ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : (
                                   'Add Friend'

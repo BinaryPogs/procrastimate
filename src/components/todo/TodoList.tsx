@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { Card, CardHeader, CardContent } from '@/components/ui/card'
 import AddTodoForm from '@/components/todo/AddTodoForm'
@@ -30,10 +30,20 @@ interface ApiError {
   message: string;
 }
 
-export default function TodoList() {
+interface OptimisticTodo extends Todo {
+  isOptimistic?: boolean
+  pointsAwarded: boolean
+}
+
+interface TodoListProps {
+  onScoreUpdate?: (score: number) => void;
+}
+
+export default function TodoList({ onScoreUpdate }: TodoListProps) {
   const { data: session } = useSession()
-  const [todos, setTodos] = useState<Todo[]>([])
+  const [todos, setTodos] = useState<OptimisticTodo[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [pendingActions, setPendingActions] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (session?.user?.id) {
@@ -52,7 +62,7 @@ export default function TodoList() {
       
       setTodos(data)
     } catch (error: unknown) {
-      const err = error as ApiError
+      const err = error as Error
       console.error('Failed to load todos:', err)
       toast.error(err.message || 'Failed to load todos')
     } finally {
@@ -60,50 +70,97 @@ export default function TodoList() {
     }
   }
 
-  const addTodo = async (title: string) => {
-    try {
-      const response = await fetch('/api/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
-      })
-      const data = await response.json()
-      
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to add todo')
+  const debouncedAddTodo = useCallback(
+    async (title: string, optimisticId: string) => {
+      try {
+        const response = await fetch('/api/todos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        })
+        
+        if (!response.ok) {
+          throw new Error('Failed to add todo')
+        }
+        
+        const realTodo = await response.json()
+        
+        setTodos(prev => prev.map(todo => 
+          todo.id === optimisticId ? realTodo : todo
+        ))
+        
+        toast.success('Todo added')
+      } catch (error: unknown) {
+        const err = error as Error
+        console.error('Failed to add todo:', err)
+        setTodos(prev => prev.filter(todo => todo.id !== optimisticId))
+        toast.error(err.message || 'Failed to add todo')
       }
-      
-      setTodos(prev => [data, ...prev])
-      toast.success('Todo added')
-    } catch (error: unknown) {
-      const err = error as ApiError
-      console.error('Failed to add todo:', err)
-      toast.error(err.message || 'Failed to add todo')
+    },
+    [setTodos]
+  )
+
+  const addTodo = async (title: string) => {
+    const optimisticTodo: OptimisticTodo = {
+      id: `optimistic-${Date.now()}`,
+      title,
+      completed: false,
+      pointsAwarded: false,
+      userId: session?.user?.id || '',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      points: 10,
+      deadline: new Date(new Date().setHours(23, 59, 59, 999)),
+      failed: false,
+      isOptimistic: true
     }
+
+    setTodos(prev => [optimisticTodo, ...prev])
+
+    debouncedAddTodo(title, optimisticTodo.id)
   }
 
   const toggleTodo = async (id: string, completed: boolean) => {
+    if (pendingActions.has(id)) return;
+    
+    setPendingActions(prev => new Set(prev).add(id))
+    
     try {
       const response = await fetch(`/api/todos/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ completed }),
       })
+      
+      if (!response.ok) throw new Error('Failed to update todo')
+      
       const data = await response.json()
       
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to update todo')
-      }
-      
       setTodos(prev => prev.map(todo => 
-        todo.id === id ? data : todo
+        todo.id === id ? data.todo : todo
       ))
-      return data
+
+      if (data.points) {
+        toast.success(
+          `Task completed! +${data.points} points${
+            data.points > 10 ? ' (including bonus!)' : ''
+          }`
+        )
+        onScoreUpdate?.(data.user.score)
+      }
     } catch (error: unknown) {
-      const err = error as ApiError
+      const err = error as Error
       console.error('Failed to update todo:', err)
+      setTodos(prev => prev.map(todo => 
+        todo.id === id ? { ...todo, completed: !completed } : todo
+      ))
       toast.error(err.message || 'Failed to update todo')
-      throw err  // Re-throw to handle in TodoItem
+    } finally {
+      setPendingActions(prev => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
     }
   }
 
@@ -179,6 +236,8 @@ export default function TodoList() {
               todo={todo}
               onToggle={toggleTodo}
               onDelete={deleteTodo}
+              isPending={pendingActions.has(todo.id)}
+              isOptimistic={todo.isOptimistic}
             />
           ))
         )}

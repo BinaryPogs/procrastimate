@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
-import { Undo2 } from 'lucide-react'
+import { Undo2, Lock, Trash } from 'lucide-react'
 import {
   Tooltip,
   TooltipContent,
@@ -24,58 +24,73 @@ interface Todo {
   failed: boolean
   userId?: string
   userName?: string
+  pointsAwarded: boolean
 }
 
 interface TodoItemProps {
   todo: Todo
-  onToggle: (id: string, completed: boolean) => Promise<Todo>
+  onToggle: (id: string, completed: boolean) => Promise<void>
   onDelete: (id: string) => Promise<void>
+  isPending: boolean
+  isOptimistic?: boolean
 }
 
-export default function TodoItem({ todo, onToggle }: TodoItemProps) {
-  const [isAnimating, setIsAnimating] = useState(false)
+export default function TodoItem({ todo, onToggle, onDelete, isPending, isOptimistic }: TodoItemProps) {
+  const [isLocking, setIsLocking] = useState(false)
+  const [timeLeft, setTimeLeft] = useState(10)
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    
+    if (todo.completed && !todo.pointsAwarded) {
+      setIsLocking(true)
+      setTimeLeft(10)
+      
+      timer = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer)
+            return 0
+          }
+          return prev - 1
+        })
+      }, 1000)
+
+      // Lock after 10 seconds
+      setTimeout(() => {
+        setIsLocking(false)
+      }, 10000)
+    }
+
+    return () => {
+      clearInterval(timer)
+    }
+  }, [todo.completed, todo.pointsAwarded])
 
   const handleStatusChange = async (completed: boolean) => {
-    setIsAnimating(true)
     try {
-      const response = await onToggle(todo.id, completed)
-      if (response.points) {
-        toast.success(
-          `Task completed! +${response.points} points${
-            response.points > todo.points ? ' (including bonus!)' : ''
-          }`
-        )
-      }
+      await onToggle(todo.id, completed)
     } catch (err) {
       console.error('Failed to update task:', err)
       toast.error('Failed to update task')
     }
-    setTimeout(() => setIsAnimating(false), 300)
   }
 
   return (
     <AnimatePresence>
       <motion.div
-        initial={{ opacity: 1, y: 0, scale: 1 }}
-        animate={{
-          opacity: isAnimating ? 0.6 : 1,
-          scale: isAnimating ? 0.98 : 1,
-          y: isAnimating ? -2 : 0,
-        }}
-        transition={{
-          duration: 0.3,
-          ease: "easeInOut"
-        }}
+        initial={{ opacity: 0.8, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
         className={`flex items-center justify-between py-3 group ${
-          todo.failed ? 'opacity-50' : ''
-        }`}
+          isPending ? 'opacity-50' : ''
+        } ${isOptimistic ? 'animate-pulse' : ''}`}
       >
         <div className="flex items-center space-x-4">
           <Checkbox
             checked={todo.completed}
             onCheckedChange={(checked) => handleStatusChange(checked as boolean)}
             className="h-5 w-5"
-            disabled={todo.failed}
+            disabled={isPending || isOptimistic || (todo.completed && !isLocking && todo.pointsAwarded)}
           />
           <div>
             <p className={`text-sm font-medium ${todo.completed ? 'line-through text-gray-500' : ''}`}>
@@ -92,6 +107,17 @@ export default function TodoItem({ todo, onToggle }: TodoItemProps) {
                 Assigned to: {todo.userName}
               </p>
             )}
+            {isLocking && (
+              <p className="text-xs text-muted-foreground">
+                Locks in {timeLeft} seconds...
+              </p>
+            )}
+            {todo.completed && !isLocking && todo.pointsAwarded && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <Lock className="h-3 w-3" />
+                Locked
+              </p>
+            )}
           </div>
         </div>
 
@@ -103,8 +129,8 @@ export default function TodoItem({ todo, onToggle }: TodoItemProps) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
                     onClick={() => handleStatusChange(false)}
+                    className="h-8 w-8"
                   >
                     <Undo2 className="h-4 w-4" />
                   </Button>
@@ -116,6 +142,26 @@ export default function TodoItem({ todo, onToggle }: TodoItemProps) {
             </TooltipProvider>
           </div>
         )}
+
+        <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onDelete(todo.id)}
+                  className="h-8 w-8"
+                >
+                  <Trash className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Delete task</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </motion.div>
     </AnimatePresence>
   )

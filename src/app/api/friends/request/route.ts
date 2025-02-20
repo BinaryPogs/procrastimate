@@ -3,72 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { pusherServer } from '@/lib/pusher'
-
-export async function POST(request: Request) {
-  const session = await getServerSession(authOptions)
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  try {
-    const { receiverId } = await request.json()
-
-    // Check for any existing friendship (including rejected ones)
-    const existingFriendship = await prisma.friendship.findFirst({
-      where: {
-        OR: [
-          {
-            requesterId: session.user.id,
-            receiverId: receiverId,
-          },
-          {
-            requesterId: receiverId,
-            receiverId: session.user.id,
-          }
-        ]
-      }
-    })
-
-    // If there's a rejected friendship, delete it first
-    if (existingFriendship?.status === 'REJECTED') {
-      await prisma.friendship.delete({
-        where: { id: existingFriendship.id }
-      })
-    } else if (existingFriendship) {
-      return NextResponse.json(
-        { error: 'Friend request already exists' },
-        { status: 400 }
-      )
-    }
-
-    // Create new friendship request
-    const friendship = await prisma.friendship.create({
-      data: {
-        requesterId: session.user.id,
-        receiverId,
-        status: 'PENDING'
-      },
-      include: {
-        requester: true,
-        receiver: true
-      }
-    })
-
-    // Trigger real-time update
-    await pusherServer.trigger(`user-${receiverId}`, 'friend-request', {
-      type: 'NEW_REQUEST',
-      friendship,
-    })
-
-    return NextResponse.json(friendship)
-  } catch (error) {
-    console.error('Friend request error:', error)
-    return NextResponse.json(
-      { error: 'Failed to send friend request' },
-      { status: 500 }
-    )
-  }
-}
+import { revalidatePath } from 'next/cache'
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -76,38 +11,109 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Get all friend requests (both sent and received)
-  const friendships = await prisma.friendship.findMany({
-    where: {
-      OR: [
-        { requesterId: session.user.id },
-        { receiverId: session.user.id },
-      ],
-    },
-    include: {
-      requester: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
+  try {
+    const friendships = await prisma.friendship.findMany({
+      where: {
+        OR: [
+          { requesterId: session.user.id },
+          { receiverId: session.user.id }
+        ]
       },
-      receiver: {
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          image: true,
-        },
+      include: {
+        requester: true,
+        receiver: true
       },
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  })
+      orderBy: {
+        createdAt: 'desc'
+      }
+    })
 
-  return NextResponse.json(friendships)
+    return NextResponse.json(friendships)
+  } catch (error) {
+    console.error('Failed to fetch friendships:', error)
+    return NextResponse.json({ error: 'Failed to fetch friendships' }, { status: 500 })
+  }
+}
+
+export async function POST(request: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  // Type assertion after the check
+  const user = session.user
+
+  try {
+    const { receiverId } = await request.json()
+
+    // Check for existing friendship in a transaction
+    const friendship = await prisma.$transaction(async (tx) => {
+      const existing = await tx.friendship.findFirst({
+        where: {
+          OR: [
+            {
+              requesterId: user.id,
+              receiverId: receiverId,
+            },
+            {
+              requesterId: receiverId,
+              receiverId: user.id,
+            }
+          ]
+        }
+      })
+
+      if (existing?.status === 'REJECTED') {
+        await tx.friendship.delete({
+          where: { id: existing.id }
+        })
+      } else if (existing) {
+        throw new Error('Friend request already exists')
+      }
+
+      return tx.friendship.create({
+        data: {
+          requesterId: user.id,
+          receiverId,
+          status: 'PENDING'
+        },
+        include: {
+          requester: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            }
+          },
+          receiver: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            }
+          }
+        }
+      })
+    })
+
+    // Real-time notification
+    await pusherServer.trigger(`user-${receiverId}`, 'friend-request', {
+      type: 'NEW_REQUEST',
+      friendship,
+    })
+
+    await revalidatePath('/api/friends/request')
+    return NextResponse.json(friendship)
+  } catch (error) {
+    console.error('Friend request error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Failed to send friend request' },
+      { status: 500 }
+    )
+  }
 }
 
 export async function PATCH(request: Request) {
@@ -116,52 +122,56 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Type assertion after the check
+  const user = session.user
+
   try {
     const { friendshipId, status } = await request.json()
 
-    // Verify the user is the receiver of the friend request
-    const friendship = await prisma.friendship.findFirst({
-      where: {
-        id: friendshipId,
-        receiverId: session.user.id,
-        status: 'PENDING',
-      },
+    const updatedFriendship = await prisma.$transaction(async (tx) => {
+      // Verify ownership and status
+      const friendship = await tx.friendship.findFirst({
+        where: {
+          id: friendshipId,
+          receiverId: user.id,
+          status: 'PENDING',
+        }
+      })
+
+      if (!friendship) {
+        throw new Error('Friend request not found')
+      }
+
+      return tx.friendship.update({
+        where: { id: friendshipId },
+        data: { status },
+        include: {
+          requester: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            }
+          },
+          receiver: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              image: true,
+            }
+          }
+        }
+      })
     })
 
-    if (!friendship) {
-      return NextResponse.json(
-        { error: 'Friend request not found' },
-        { status: 404 }
-      )
-    }
-
-    // Update friendship status
-    const updatedFriendship = await prisma.friendship.update({
-      where: { id: friendshipId },
-      data: { status },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-        receiver: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-          },
-        },
-      },
-    })
-
-    // Trigger real-time update for both users
+    // Real-time updates
     await pusherServer.trigger(
-      [`user-${updatedFriendship.requesterId}`, `user-${updatedFriendship.receiverId}`],
+      [
+        `user-${updatedFriendship.requesterId}`,
+        `user-${updatedFriendship.receiverId}`
+      ],
       'friend-request-update',
       {
         type: status === 'ACCEPTED' ? 'REQUEST_ACCEPTED' : 'REQUEST_REJECTED',
@@ -169,11 +179,12 @@ export async function PATCH(request: Request) {
       }
     )
 
+    await revalidatePath('/api/friends/request')
     return NextResponse.json(updatedFriendship)
   } catch (error) {
     console.error('Friend request update error:', error)
     return NextResponse.json(
-      { error: 'Failed to update friend request' },
+      { error: error instanceof Error ? error.message : 'Failed to update friend request' },
       { status: 500 }
     )
   }

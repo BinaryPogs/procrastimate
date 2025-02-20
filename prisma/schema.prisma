@@ -6,9 +6,9 @@ generator client {
 }
 
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
-    // directUrl = env("DIRECT_URL")
+    provider  = "postgresql"
+    url       = env("DATABASE_URL")
+    directUrl = env("DIRECT_URL")
 }
 
 model Account {
@@ -67,16 +67,20 @@ model VerificationToken {
 }
 
 model Todo {
-    id        String   @id @default(cuid())
-    title     String
-    completed Boolean  @default(false)
-    userId    String
-    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
-    points    Int      @default(10)
-    deadline  DateTime
-    failed    Boolean  @default(false)
+    id            String   @id @default(cuid())
+    title         String
+    completed     Boolean  @default(false)
+    pointsAwarded Boolean  @default(false)
+    userId        String
+    user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
+    points        Int      @default(10)
+    deadline      DateTime
+    failed        Boolean  @default(false)
+
+    @@index([userId, completed, deadline])
+    @@index([userId, failed])
 }
 
 model Friendship {

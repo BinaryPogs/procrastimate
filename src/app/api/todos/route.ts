@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { revalidatePath } from 'next/cache'
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -9,16 +10,22 @@ export async function GET() {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const todos = await prisma.todo.findMany({
-    where: {
-      userId: session.user.id
-    },
-    orderBy: {
-      createdAt: 'desc'
-    }
-  })
-
-  return NextResponse.json(todos)
+  try {
+    const todos = await prisma.todo.findMany({
+      where: {
+        userId: session.user.id,
+      },
+      orderBy: [
+        { completed: 'asc' },
+        { deadline: 'asc' },
+        { createdAt: 'desc' }
+      ]
+    })
+    return NextResponse.json(todos)
+  } catch (error) {
+    console.error('Failed to fetch todos:', error)
+    return NextResponse.json({ error: 'Failed to fetch todos' }, { status: 500 })
+  }
 }
 
 export async function POST(request: Request) {
@@ -29,36 +36,21 @@ export async function POST(request: Request) {
 
   try {
     const { title } = await request.json()
-    if (!title?.trim()) {
-      return NextResponse.json({ error: 'Title is required' }, { status: 400 })
-    }
-
-    // Set deadline to end of current day (11:59 PM)
-    const now = new Date()
-    const deadline = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      23, 59, 59
-    )
-
+    
     const todo = await prisma.todo.create({
       data: {
-        title: title.trim(),
+        title,
         userId: session.user.id,
-        deadline,
-        points: 10,
-        completed: false,
-        failed: false
+        deadline: new Date(new Date().setHours(23, 59, 59, 999)), // End of day
+        points: 10
       }
     })
+
+    await revalidatePath('/api/todos')
 
     return NextResponse.json(todo)
   } catch (error) {
     console.error('Failed to create todo:', error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to create todo' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Failed to create todo' }, { status: 500 })
   }
 } 

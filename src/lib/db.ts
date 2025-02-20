@@ -17,7 +17,7 @@ const prismaClientSingleton = () => {
       db: {
         url: getDatabaseUrl(),
       },
-    },
+    }
   })
 }
 
