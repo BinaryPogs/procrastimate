@@ -157,9 +157,10 @@ export default function FriendsList() {
     if (pendingActions.has(friendshipId)) return
     setPendingActions(prev => new Set(prev).add(friendshipId))
 
-    // Optimistically remove friend from UI
+    // Optimistically remove from UI
+    const friend = friends.find(f => f.friendshipId === friendshipId)
     setFriends(prev => prev.filter(f => f.friendshipId !== friendshipId))
-    
+
     try {
       const response = await fetch(`/api/friends/${friendshipId}`, {
         method: 'DELETE'
@@ -168,9 +169,12 @@ export default function FriendsList() {
       if (!response.ok) throw new Error('Failed to remove friend')
       toast.success('Friend removed')
     } catch (error: unknown) {
-      // Don't revert the UI change even on error
       const apiError = error as ApiError
       console.error('Failed to remove friend:', apiError.message)
+      if (friend) {
+        setFriends(prev => [...prev, friend])
+      }
+      toast.error('Failed to remove friend')
     } finally {
       setPendingActions(prev => {
         const next = new Set(prev)
@@ -180,13 +184,15 @@ export default function FriendsList() {
     }
   }
 
-  // Fix the data usage and error typing
   const handleFriendRequest = async (requestId: string, status: 'ACCEPTED' | 'REJECTED') => {
     if (pendingActions.has(requestId)) return
     setPendingActions(prev => new Set(prev).add(requestId))
 
-    // Optimistically remove request from UI
+    // Immediately remove request from UI
     const request = requests.find(r => r.id === requestId)
+    setRequests(prev => prev.filter(r => r.id !== requestId))
+    
+    // If accepting, immediately add to friends list
     if (status === 'ACCEPTED' && request) {
       setFriends(prev => [...prev, {
         friendshipId: `temp-${requestId}`,
@@ -203,31 +209,70 @@ export default function FriendsList() {
 
       if (!response.ok) throw new Error('Failed to update request')
       
+      // Only show success toast after backend confirms
       toast.success(
         status === 'ACCEPTED' 
           ? 'Friend request accepted!' 
           : 'Friend request rejected'
       )
 
-      // Only refresh friends list on error to update temp ID
+      // Silently update real friendshipId if accepted
       if (status === 'ACCEPTED') {
         await fetchFriends()
       }
     } catch (error: unknown) {
       const apiError = error as ApiError
       console.error('Failed to handle friend request:', apiError.message)
-      // Only revert if request exists
+      // Revert optimistic updates on error
       if (request) {
         setRequests(prev => [...prev, request])
-      }
-      if (status === 'ACCEPTED') {
-        setFriends(prev => prev.filter(f => f.friendshipId !== `temp-${requestId}`))
+        if (status === 'ACCEPTED') {
+          setFriends(prev => prev.filter(f => f.friendshipId !== `temp-${requestId}`))
+        }
       }
       toast.error('Failed to handle friend request')
     } finally {
       setPendingActions(prev => {
         const next = new Set(prev)
         next.delete(requestId)
+        return next
+      })
+    }
+  }
+
+  const handleCancelRequest = async (userId: string) => {
+    if (pendingActions.has(userId)) return
+    setPendingActions(prev => new Set(prev).add(userId))
+
+    const request = sentRequests.get(userId)
+    if (!request) return
+
+    // Optimistically remove from UI
+    setSentRequests(prev => {
+      const next = new Map(prev)
+      next.delete(userId)
+      return next
+    })
+
+    try {
+      const response = await fetch(`/api/friends/requests/${request.id}`, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) throw new Error('Failed to cancel request')
+      toast.success('Friend request cancelled')
+    } catch (error: unknown) {
+      const apiError = error as ApiError
+      console.error('Failed to cancel request:', apiError.message)
+      // Revert optimistic update on error
+      if (request) {
+        setSentRequests(prev => new Map(prev).set(userId, request))
+      }
+      toast.error('Failed to cancel friend request')
+    } finally {
+      setPendingActions(prev => {
+        const next = new Set(prev)
+        next.delete(userId)
         return next
       })
     }
@@ -318,40 +363,6 @@ export default function FriendsList() {
         }
       }
       toast.error('Failed to send friend request')
-    } finally {
-      setPendingActions(prev => {
-        const next = new Set(prev)
-        next.delete(userId)
-        return next
-      })
-    }
-  }
-
-  const handleCancelRequest = async (userId: string) => {
-    if (pendingActions.has(userId)) return
-    setPendingActions(prev => new Set(prev).add(userId))
-
-    const request = sentRequests.get(userId)
-    if (!request) return
-
-    try {
-      const response = await fetch(`/api/friends/requests/${request.id}`, {
-        method: 'DELETE'
-      })
-
-      if (!response.ok) throw new Error('Failed to cancel request')
-      
-      // Remove from sent requests
-      setSentRequests(prev => {
-        const next = new Map(prev)
-        next.delete(userId)
-        return next
-      })
-      toast.success('Friend request cancelled')
-    } catch (error: unknown) {
-      const apiError = error as ApiError
-      console.error('Failed to cancel request:', apiError.message)
-      toast.error('Failed to cancel friend request')
     } finally {
       setPendingActions(prev => {
         const next = new Set(prev)
