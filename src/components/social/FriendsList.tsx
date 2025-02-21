@@ -17,6 +17,7 @@ import { useDebounce } from '@/hooks/useDebounce'
 import FriendSearchFilters, { SearchFilter } from '@/components/social/FriendSearchFilters'
 import { UserCard } from '@/components/social/UserCard'
 import { pusherClient } from "@/lib/pusher"
+import { cn } from "@/lib/utils"
 
 // Add proper error type
 interface ApiError extends Error {
@@ -184,6 +185,15 @@ export default function FriendsList() {
     if (pendingActions.has(requestId)) return
     setPendingActions(prev => new Set(prev).add(requestId))
 
+    // Optimistically remove request from UI
+    const request = requests.find(r => r.id === requestId)
+    if (status === 'ACCEPTED' && request) {
+      setFriends(prev => [...prev, {
+        friendshipId: `temp-${requestId}`,
+        user: request.sender
+      }])
+    }
+
     try {
       const response = await fetch(`/api/friends/requests/${requestId}`, {
         method: 'PATCH',
@@ -193,24 +203,27 @@ export default function FriendsList() {
 
       if (!response.ok) throw new Error('Failed to update request')
       
-      // Remove request from list
-      setRequests(prev => prev.filter(r => r.id !== requestId))
-      
-      // If accepted, refresh friends list
-      if (status === 'ACCEPTED') {
-        await fetchFriends()
-      }
-
       toast.success(
         status === 'ACCEPTED' 
           ? 'Friend request accepted!' 
           : 'Friend request rejected'
       )
+
+      // Only refresh friends list on error to update temp ID
+      if (status === 'ACCEPTED') {
+        await fetchFriends()
+      }
     } catch (error: unknown) {
       const apiError = error as ApiError
-      console.error('Failed to handle request:', apiError.message)
+      console.error('Failed to handle friend request:', apiError.message)
+      // Only revert if request exists
+      if (request) {
+        setRequests(prev => [...prev, request])
+      }
+      if (status === 'ACCEPTED') {
+        setFriends(prev => prev.filter(f => f.friendshipId !== `temp-${requestId}`))
+      }
       toast.error('Failed to handle friend request')
-      await refreshAll()
     } finally {
       setPendingActions(prev => {
         const next = new Set(prev)
@@ -254,6 +267,31 @@ export default function FriendsList() {
     if (pendingActions.has(userId)) return
     setPendingActions(prev => new Set(prev).add(userId))
 
+    // Optimistically update UI
+    const userToAdd = searchResults.find(u => u.id === userId) || 
+                     recommendations.find(u => u.id === userId)
+                     
+    if (userToAdd && session?.user) {
+      const { id, name, email, image } = session.user
+      setSentRequests(prev => new Map(prev).set(userId, {
+        id: `temp-${userId}`,
+        senderId: id,
+        receiverId: userId,
+        status: 'PENDING',
+        createdAt: new Date(),
+        receiver: userToAdd,
+        sender: {
+          id,
+          name: name || null,
+          email: email || null,
+          image: image || null
+        }
+      }))
+      
+      setSearchResults(prev => prev.filter(u => u.id !== userId))
+      setRecommendations(prev => prev.filter(u => u.id !== userId))
+    }
+
     try {
       const response = await fetch('/api/friends/request', {
         method: 'POST',
@@ -261,35 +299,25 @@ export default function FriendsList() {
         body: JSON.stringify({ receiverId: userId }),
       })
 
-      if (response.status === 400) {
-        // If request already exists or they're already friends
-        const error = await response.json()
-        toast.info(error.error)
-        
-        // Refresh all states to get the latest data
-        await loadRequests()
-        
-        // Remove user from search results
-        setSearchResults(prev => prev.filter(user => user.id !== userId))
-        setRecommendations(prev => prev.filter(user => user.id !== userId))
-        return
-      }
-
       if (!response.ok) throw new Error('Failed to send friend request')
-      
-      const friendRequest = await response.json()
-      setSentRequests(prev => new Map(prev).set(userId, friendRequest))
-      
-      // Remove user from search results and recommendations
-      setSearchResults(prev => prev.filter(user => user.id !== userId))
-      setRecommendations(prev => prev.filter(user => user.id !== userId))
-      
       toast.success('Friend request sent!')
     } catch (error: unknown) {
       const apiError = error as ApiError
       console.error('Failed to send friend request:', apiError.message)
+      // Revert optimistic updates
+      setSentRequests(prev => {
+        const next = new Map(prev)
+        next.delete(userId)
+        return next
+      })
+      if (userToAdd) {
+        if (searchQuery) {
+          setSearchResults(prev => [...prev, userToAdd])
+        } else {
+          setRecommendations(prev => [...prev, userToAdd])
+        }
+      }
       toast.error('Failed to send friend request')
-      await refreshAll() // Refresh all states on error
     } finally {
       setPendingActions(prev => {
         const next = new Set(prev)
@@ -425,13 +453,26 @@ export default function FriendsList() {
                 onClick={async () => {
                   setSearchQuery('');
                   setSearchResults([]);
-                  await Promise.all([
-                    fetchRecommendations(),
-                    loadRequests()
-                  ]);
+                  
+                  // Optimistically clear results before refresh
+                  setRecommendations([]);
+                  
+                  try {
+                    await Promise.all([
+                      fetchRecommendations(),
+                      loadRequests()
+                    ]);
+                  } catch (error: unknown) {
+                    const apiError = error as ApiError
+                    console.error('Failed to refresh recommendations:', apiError.message)
+                    toast.error("Failed to refresh. Please try again.");
+                  }
                 }}
                 disabled={isSearching || isRefreshing}
-                className={isRefreshing ? 'animate-spin' : ''}
+                className={cn(
+                  "transition-all duration-200",
+                  isRefreshing && "animate-spin"
+                )}
               >
                 <RefreshCw className="h-4 w-4" />
                 <span className="sr-only">Refresh Recommendations</span>
