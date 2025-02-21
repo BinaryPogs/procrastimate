@@ -3,6 +3,11 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 
+interface ApiError extends Error {
+  status?: number;
+  code?: string;
+}
+
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session?.user?.id) {
@@ -10,28 +15,42 @@ export async function GET() {
   }
 
   try {
-    // Get all existing friendship IDs for the current user
-    const existingFriendships = await prisma.friendship.findMany({
-      where: {
-        OR: [
-          { requesterId: session.user.id },
-          { receiverId: session.user.id }
-        ],
-        status: { in: ['ACCEPTED', 'PENDING'] }
-      },
-      select: {
-        requesterId: true,
-        receiverId: true
-      }
-    })
-
-    // Extract all user IDs that are already connected
-    const connectedUserIds = new Set([
-      ...existingFriendships.map(f => f.requesterId),
-      ...existingFriendships.map(f => f.receiverId)
+    // Get existing connections
+    const [friendships, friendRequests] = await Promise.all([
+      prisma.friendship.findMany({
+        where: {
+          OR: [
+            { user1Id: session.user.id },
+            { user2Id: session.user.id }
+          ]
+        },
+        select: {
+          user1Id: true,
+          user2Id: true
+        }
+      }),
+      prisma.friendRequest.findMany({
+        where: {
+          OR: [
+            { senderId: session.user.id },
+            { receiverId: session.user.id }
+          ],
+          status: 'PENDING'
+        },
+        select: {
+          senderId: true,
+          receiverId: true
+        }
+      })
     ])
 
-    // Get users who aren't connected yet
+    // Get all connected user IDs
+    const connectedUserIds = new Set([
+      ...friendships.flatMap(f => [f.user1Id, f.user2Id]),
+      ...friendRequests.flatMap(r => [r.senderId, r.receiverId])
+    ])
+
+    // Get random users who aren't connected
     const recommendations = await prisma.user.findMany({
       where: {
         AND: [
@@ -44,27 +63,20 @@ export async function GET() {
         id: true,
         name: true,
         email: true,
-        image: true,
-        isGuest: true
+        image: true
       },
-      take: 10,
       orderBy: {
         createdAt: 'desc'
-      }
-    })
-
-    console.log('Found recommendations:', recommendations.length)
-
-    // Cache the response for 1 minute
-    return new NextResponse(JSON.stringify({ users: recommendations }), {
-      headers: {
-        'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
       },
+      take: 5
     })
-  } catch (error) {
-    console.error('Recommendations error:', error)
+
+    return NextResponse.json(recommendations)
+  } catch (error: unknown) {
+    const apiError = error as ApiError
+    console.error('Failed to fetch recommendations:', apiError.message)
     return NextResponse.json(
-      { error: 'Failed to fetch recommendations' },
+      { error: `Failed to fetch recommendations: ${apiError.message}` }, 
       { status: 500 }
     )
   }

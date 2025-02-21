@@ -39,21 +39,24 @@ model Session {
 }
 
 model User {
-    id               String       @id @default(cuid())
+    id               String          @id @default(cuid())
     name             String?
-    email            String?      @unique
+    email            String?         @unique
     emailVerified    DateTime?
     image            String?
-    isGuest          Boolean      @default(false)
-    createdAt        DateTime     @default(now())
-    updatedAt        DateTime     @updatedAt
+    isGuest          Boolean         @default(false)
+    createdAt        DateTime        @default(now())
+    updatedAt        DateTime        @updatedAt
     accounts         Account[]
     sessions         Session[]
     todos            Todo[]
-    friendsRequested Friendship[] @relation("requester")
-    friendsReceived  Friendship[] @relation("receiver")
+    friendships1     Friendship[]    @relation("UserFriendships1")
+    friendships2     Friendship[]    @relation("UserFriendships2")
+    sentRequests     FriendRequest[] @relation("SentRequests")
+    receivedRequests FriendRequest[] @relation("ReceivedRequests")
     password         String?
-    score            Int          @default(0)
+    score            Int             @default(0)
+    notifications    Notification[]
 
     @@index([isGuest, createdAt])
 }
@@ -85,17 +88,42 @@ model Todo {
 }
 
 model Friendship {
-    id          String   @id @default(cuid())
-    requesterId String
-    receiverId  String
-    status      String   @default("PENDING") // PENDING, ACCEPTED, REJECTED
-    createdAt   DateTime @default(now())
-    updatedAt   DateTime @updatedAt
+    id        String   @id @default(cuid())
+    user1Id   String
+    user2Id   String
+    createdAt DateTime @default(now())
+    user1     User     @relation("UserFriendships1", fields: [user1Id], references: [id])
+    user2     User     @relation("UserFriendships2", fields: [user2Id], references: [id])
 
-    requester User @relation("requester", fields: [requesterId], references: [id], onDelete: Cascade)
-    receiver  User @relation("receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+    @@unique([user1Id, user2Id])
+}
 
-    @@unique([requesterId, receiverId])
-    @@index([requesterId, status])
-    @@index([receiverId, status])
+model FriendRequest {
+    id         String        @id @default(cuid())
+    senderId   String
+    receiverId String
+    status     RequestStatus @default(PENDING)
+    createdAt  DateTime      @default(now())
+    sender     User          @relation("SentRequests", fields: [senderId], references: [id])
+    receiver   User          @relation("ReceivedRequests", fields: [receiverId], references: [id])
+
+    @@unique([senderId, receiverId])
+}
+
+model Notification {
+    id        String   @id @default(cuid())
+    userId    String
+    type      String
+    message   String
+    read      Boolean  @default(false)
+    createdAt DateTime @default(now())
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+    @@index([userId, read])
+}
+
+enum RequestStatus {
+    PENDING
+    ACCEPTED
+    REJECTED
 }

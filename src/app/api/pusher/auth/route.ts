@@ -10,14 +10,12 @@ export async function POST(request: Request) {
   }
 
   const data = await request.text()
-  const [socketId, channelName] = data.split('&').map(str => str.split('=')[1])
-
-  const authResponse = pusherServer.authorizeChannel(socketId, channelName, {
+  const [socketId, channel] = data.split(":")
+  
+  const authResponse = pusherServer.authorizeChannel(socketId, channel, {
     user_id: session.user.id,
     user_info: {
-      name: session.user.name,
-      email: session.user.email,
-      image: session.user.image
+      name: session.user.name
     }
   })
 

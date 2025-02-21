@@ -27,7 +27,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Friend request not found' }, { status: 404 })
     }
 
-    if (friendship.requesterId !== session.user.id) {
+    if (friendship.user1Id !== session.user.id && friendship.user2Id !== session.user.id) {
       return NextResponse.json({ error: 'Not authorized to cancel this request' }, { status: 403 })
     }
 

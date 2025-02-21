@@ -1,35 +1,45 @@
 'use client'
 
 import { Loader2 } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { cn } from '@/lib/utils'
 
 interface LoadingStateProps {
-  title?: string
-  description?: string
-  fullScreen?: boolean
+  size?: 'sm' | 'md' | 'lg'
+  text?: string | null
+  className?: string
 }
 
 export function LoadingState({ 
-  title = "Loading...", 
-  description = "Please wait while we set things up.",
-  fullScreen = false 
+  size = 'md',
+  text = null,
+  className 
 }: LoadingStateProps) {
+  const sizeClasses = {
+    sm: 'h-4 w-4',
+    md: 'h-6 w-6',
+    lg: 'h-8 w-8'
+  }
+
   return (
-    <div className={`flex flex-col items-center justify-center space-y-4 text-center
-      ${fullScreen ? 'min-h-screen' : 'py-12'}`}>
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.2 }}
-      >
-        <Loader2 className="h-12 w-12 animate-spin text-primary" />
-      </motion.div>
-      <div className="space-y-2">
-        <h3 className="text-xl font-medium">{title}</h3>
-        <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-          {description}
-        </p>
-      </div>
+    <div className={cn(
+      "flex flex-col items-center justify-center gap-3 p-4",
+      className
+    )}>
+      <Loader2 className={cn(
+        "animate-spin text-muted-foreground",
+        sizeClasses[size]
+      )} />
+      {text && (
+        <p className="text-sm text-muted-foreground">{text}</p>
+      )}
+    </div>
+  )
+}
+
+export function SimpleLoadingState() {
+  return (
+    <div className="flex justify-center items-center p-4">
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
     </div>
   )
 } 

@@ -11,20 +11,15 @@ export const pusherServer = new PusherServer({
 })
 
 // Client-side Pusher instance
-let pusherClient: PusherClient | undefined
-
-if (typeof window !== 'undefined') {
-  pusherClient = new PusherClient(process.env.NEXT_PUBLIC_PUSHER_KEY!, {
+export const pusherClient = new PusherClient(
+  process.env.NEXT_PUBLIC_PUSHER_KEY!, {
     cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER!,
-    enabledTransports: ['ws', 'wss'],
+    authEndpoint: '/api/pusher/auth',
     forceTLS: true,
-    authEndpoint: '/api/pusher/auth'
-  })
-
-  // Only set these in browser environment
-  if (process.env.NODE_ENV === 'development') {
-    pusherClient.config.enabledTransports = ['ws', 'wss']
   }
-}
+)
 
-export { pusherClient } 
+// Only set these in browser environment
+if (process.env.NODE_ENV === 'development') {
+  pusherClient.config.enabledTransports = ['ws', 'wss']
+} 

@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { Prisma } from '@prisma/client'
 
 export async function GET(request: Request) {
   const session = await getServerSession(authOptions)
@@ -13,56 +12,73 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const query = searchParams.get('q')
 
-  if (!query) {
-    // Return recent users when no search query
-    const recentUsers = await prisma.user.findMany({
+  if (!query || query.length < 2) {
+    return NextResponse.json([])
+  }
+
+  try {
+    // Get existing connections
+    const [friendships, friendRequests] = await Promise.all([
+      prisma.friendship.findMany({
+        where: {
+          OR: [
+            { user1Id: session.user.id },
+            { user2Id: session.user.id }
+          ]
+        },
+        select: {
+          user1Id: true,
+          user2Id: true
+        }
+      }),
+      prisma.friendRequest.findMany({
+        where: {
+          OR: [
+            { senderId: session.user.id },
+            { receiverId: session.user.id }
+          ],
+          status: 'PENDING'
+        },
+        select: {
+          senderId: true,
+          receiverId: true
+        }
+      })
+    ])
+
+    // Get all connected user IDs
+    const connectedUserIds = new Set([
+      ...friendships.flatMap(f => [f.user1Id, f.user2Id]),
+      ...friendRequests.flatMap(r => [r.senderId, r.receiverId])
+    ])
+
+    // Search for users
+    const users = await prisma.user.findMany({
       where: {
-        id: { not: session.user.id },
-        isGuest: false as const,
-      },
-      orderBy: {
-        createdAt: 'desc'
+        AND: [
+          {
+            OR: [
+              { name: { contains: query, mode: 'insensitive' } },
+              { email: { contains: query, mode: 'insensitive' } }
+            ]
+          },
+          { id: { not: session.user.id } },
+          { id: { notIn: Array.from(connectedUserIds) } },
+          { isGuest: false }
+        ]
       },
       select: {
         id: true,
         name: true,
         email: true,
-        image: true,
+        image: true
       },
-      take: 5,
+      take: 10
     })
-    return NextResponse.json({ users: recentUsers })
+
+    return NextResponse.json(users)
+  } catch (error) {
+    console.error('Search error:', error)
+    return NextResponse.json({ error: 'Search failed' }, { status: 500 })
   }
-
-  const filter = searchParams.get('filter') || 'all'
-
-  const searchCondition = filter === 'all' 
-    ? {
-        OR: [
-          { name: { contains: query, mode: Prisma.QueryMode.insensitive } },
-          { email: { contains: query, mode: Prisma.QueryMode.insensitive } },
-        ],
-      }
-    : filter === 'name'
-    ? { name: { contains: query, mode: Prisma.QueryMode.insensitive } }
-    : { email: { contains: query, mode: Prisma.QueryMode.insensitive } }
-
-  const users = await prisma.user.findMany({
-    where: {
-      AND: [
-        searchCondition,
-        { id: { not: session.user.id } },
-        { isGuest: false as const },
-      ],
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-    },
-    take: 5,
-  })
-
-  return NextResponse.json({ users })
 } 
